@@ -1,33 +1,32 @@
 General:
-    MODEL_NAME: AB_MIL
+    MODEL_NAME: FR_MIL
     seed: 2024
-    num_classes: 2
-    num_epochs: 5
-    device: 1
+    num_classes: 5
+    num_epochs: 100
+    device: 2
     num_workers: 4
-    best_model_metric: macro_auc  
-    earlystop: 
+    best_model_metric: macro_auc
+    earlystop:
         use: False
         patience: 5
         metric: macro_auc
 
 Dataset:
-    DATASET_NAME: your_dataset_name
+    DATASET_NAME: gleason_total
     # to use train-val-test, open dataset_csv_dir
     # to use k-fold train-val/k-fold train-val then test, open dataset_root_dir
-    
-    dataset_csv_path: /path/to/your/dataset.csv
-    # dataset_root_dir: /dir/to/your/dataset_dir/
+
+#    dataset_csv_path: path/to/csv
+    dataset_root_dir: /data2/lbliao/Code/MIL_BASELINE/datasets/gleason_total
 
 Logs:
-    log_root_dir: /path/to/your/log_dir/
-
+    log_root_dir: /data2/lbliao/Code/MIL_BASELINE/logs
 
 Model:
     in_dim: 1024  # depend on the pt dimensions，such resnet50——>1024 vit_s——>384
-    L: 512
-    D: 128
-    dropout: 0.1
+    hidden_dim: 512
+    k: 1
+    num_heads: 8
     act: relu  # relu or silu gule
     optimizer:
         which: adam    # adam or adamw

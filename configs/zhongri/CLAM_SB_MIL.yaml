@@ -1,33 +1,38 @@
 General:
-    MODEL_NAME: FR_MIL
-    seed: 2024
+    MODEL_NAME: CLAM_SB_MIL
+    seed: 42
     num_classes: 2
-    num_epochs: 5
-    device: 1
-    num_workers: 4
-    best_model_metric: macro_auc  
-    earlystop: 
+    num_epochs: 100
+    device: 0
+    num_workers: 8
+    best_model_metric: macro_auc
+    earlystop:
         use: False
-        patience: 5
+        patience: 30
         metric: macro_auc
 
 Dataset:
-    DATASET_NAME: your_dataset_name
+    DATASET_NAME: uni
     # to use train-val-test, open dataset_csv_dir
     # to use k-fold train-val/k-fold train-val then test, open dataset_root_dir
-    
-    dataset_csv_path: /path/to/your/dataset.csv
-    # dataset_root_dir: /dir/to/your/dataset_dir/
+
+#    dataset_csv_path: path/to/csv
+    dataset_root_dir: datasets/ls/xh/uni
 
 Logs:
-    log_root_dir: /path/to/your/log_dir/
+    log_root_dir: logs/ls/xh
 
 Model:
-    in_dim: 1024  # depend on the pt dimensions，such resnet50——>1024 vit_s——>384
-    hidden_dim: 512
-    k: 1
-    num_heads: 8
-    act: relu  # relu or silu gule
+    in_dim: 1024 # depend on the pt dimensions，such resnet50——>1024 vit_s——>384
+    dropout: 0.1
+    act: relu  # relu or silu gelu
+    k_sample: 8
+    size_arg: small  
+    instance_loss_fn: ce
+    subtyping: True
+    instance_eval: True
+    gate: True
+    bag_weight: 0.7
     optimizer:
         which: adam    # adam or adamw
         adam_config:
@@ -36,7 +41,7 @@ Model:
         adamw_config:
             lr: 0.0002
             weight_decay: 0.00001
-    criterion: ce  
+    criterion: ce  # ce
     scheduler:
         warmup: 2
         which: step  # [step, cosine,multi_step,exponential]
@@ -51,8 +56,6 @@ Model:
         cosine_config:
             T_max: 10 # interval of cosine annealing, begin after warmup
             eta_min: 0.0001
-            
-
 
         
 
