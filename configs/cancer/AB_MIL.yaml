@@ -3,7 +3,7 @@ General:
     seed: 42
     num_classes: 2
     num_epochs: 100
-    device: 1
+    device: 0
     num_workers: 4
     best_model_metric: macro_auc  
     earlystop: 
@@ -12,15 +12,15 @@ General:
         metric: macro_auc
 
 Dataset:
-    DATASET_NAME: your_dataset_name
+    DATASET_NAME: 0829
     # to use train-val-test, open dataset_csv_dir
     # to use k-fold train-val/k-fold train-val then test, open dataset_root_dir
     
-    dataset_csv_path: /path/to/your/dataset.csv
-    # dataset_root_dir: /dir/to/your/dataset_dir/
+    # dataset_csv_path: /path/to/your/dataset.csv
+    dataset_root_dir: datasets/cancer/0829
 
 Logs:
-    log_root_dir: /path/to/your/log_dir/
+    log_root_dir: result/cancer
 
 
 Model:
