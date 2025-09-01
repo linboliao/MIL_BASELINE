@@ -22,7 +22,7 @@ def main(arg):
         os.makedirs(log_root_dir,exist_ok=True)
         sub_dir = os.path.join(log_root_dir,args.Dataset.DATASET_NAME,args.General.MODEL_NAME)
         os.makedirs(sub_dir,exist_ok=True)
-        args.Logs.now_log_dir = os.path.join(sub_dir,f'time_{get_time()}_{args.Dataset.DATASET_NAME}_{args.General.MODEL_NAME}_seed_{args.General.seed}')
+        args.Logs.now_log_dir = os.path.join(sub_dir,f'seed_{args.General.seed}_{get_time()}')
         process(args,yaml_path,arg.options)
 
     else:
@@ -42,11 +42,11 @@ def main(arg):
             os.makedirs(sub_dir,exist_ok=True)
             if now_fold != None:
                 fold_dir = f'fold_{now_fold}'
-                args.Logs.now_log_dir = os.path.join(sub_dir,f'time_{process_time}_{args.Dataset.DATASET_NAME}_{args.General.MODEL_NAME}_seed_{args.General.seed}/{fold_dir}')
+                args.Logs.now_log_dir = os.path.join(sub_dir,f'seed_{args.General.seed}_{process_time}/{fold_dir}')
             os.makedirs(args.Logs.now_log_dir,exist_ok=True)
             process(args,yaml_path,arg.options)
             print(f'K-Fold:{k_idx+1} Done!')
-        fold_total_log_dir = os.path.join(sub_dir,f'time_{process_time}_{args.Dataset.DATASET_NAME}_{args.General.MODEL_NAME}_seed_{args.General.seed}')
+        fold_total_log_dir = os.path.join(sub_dir,f'seed_{args.General.seed}_{process_time}')
         merge_k_fold_logs(fold_total_log_dir,args.General.process_pipeline)
         
         
