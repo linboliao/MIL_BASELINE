@@ -1,6 +1,6 @@
-import pandas as pd
 import os
 import numpy as np
+import pandas as pd
 import h5py
 import torch
 import concurrent.futures
@@ -8,13 +8,7 @@ from pathlib import Path
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-import os
-import torch
-import pandas as pd
-import concurrent.futures
 import threading
-from pathlib import Path
-from tqdm import tqdm
 
 
 class WSI_Dataset(Dataset):
