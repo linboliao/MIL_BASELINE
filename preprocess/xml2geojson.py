@@ -1,6 +1,7 @@
 import argparse
 import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 import json
 import os
 
@@ -91,24 +92,24 @@ def xml_to_geojson(xml_path, output_path):
 
 
 parser = argparse.ArgumentParser(description='xml标注转geojson标注')
-parser.add_argument('--xml_dir', type=str, default='/NAS3/lbliao/Data/CRC/xml/tumor')
+parser.add_argument('--xml_dir', type=str, default='/NAS4/llb/协和CRC标注数据')
 parser.add_argument('--geojson_dir', type=str, default='/NAS3/lbliao/Data/CRC/geojson/tumor')
 if __name__ == "__main__":
     args = parser.parse_args()
-    xml_dir = args.xml_dir
     geojson_dir = args.geojson_dir
     os.makedirs(geojson_dir, exist_ok=True)
-    xmls = os.listdir(xml_dir)
-    for xml in xmls:
-        xml_path = os.path.join(xml_dir, xml)
-        name_part = xml.replace('.xml', '')
-        filename_without_ext = xml.replace('.xml', '')
+
+    xml_dir = Path(args.xml_dir)
+    xml_paths = list(xml_dir.rglob('*.xml'))
+    geojson_dir = Path(args.geojson_dir)
+    for xml_path in xml_paths:
+        base = xml_path.stem
         pattern = r'\d{4}-\d{2}-\d{2} \d{2}.\d{2}.\d{2}'  # 匹配 YYYY-MM-DD HH:MM:SS
-        cleaned_name = re.sub(pattern, '', name_part)
+        cleaned_name = re.sub(pattern, '', base)
         cleaned_name = cleaned_name.replace('-', ' ')
         cleaned_name = cleaned_name.strip().replace('  ', ' ') + '.geojson'
         if ' ' not in cleaned_name:
             cleaned_name = cleaned_name[:-10] + ' ' + cleaned_name[-10:]
-        geojson_path = os.path.join(geojson_dir, cleaned_name)
-        xml_to_geojson(xml_path, geojson_path)
-        print(f'{xml} 转 geojson 成功，保存为 {cleaned_name}')
+        geojson_path = os.path.join(xml_path.parent, cleaned_name)
+        xml_to_geojson(str(xml_path), geojson_path)
+        print(f'{base} 转 geojson 成功，保存为 {cleaned_name}')

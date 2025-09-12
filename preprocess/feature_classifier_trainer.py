@@ -14,14 +14,14 @@ import glob
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-tumor_path = '/NAS2/Data1/lbliao/Data/CRC/协和/cls/geojson/tumor'
-normal_path = '/NAS2/Data1/lbliao/Data/CRC/协和/cls/geojson/normal'
+tumor_path = '/NAS3/lbliao/Data/CRC/协和/cls/geojson/tumor'
+normal_path = '/NAS3/lbliao/Data/CRC/协和/cls/geojson/normal'
 tumor_list = [os.path.splitext(p)[0] for p in os.listdir(tumor_path)]
 normal_list = [os.path.splitext(p)[0] for p in os.listdir(normal_path)]
 
 
 class TensorDataset(Dataset):
-    def __init__(self, file_paths, labels, preload=False, transform=None, max_memory_gb=50, num_workers=80):
+    def __init__(self, file_paths, labels, preload=False, transform=None, max_memory_gb=50, num_workers=None):
         """
         优化后的自定义数据集类，支持预加载与内存控制
         :param file_paths: .pt文件路径列表
@@ -141,6 +141,104 @@ class TensorDataset(Dataset):
         return tensor, label
 
     def __len__(self):
+        return len(self.file_paths)
+
+
+class PTDataset(Dataset):
+    def __init__(self, root_dir, preload, max_workers=None, transform=None):
+        """
+        初始化数据集并并行预加载所有数据到内存
+
+        Args:
+            root_dir: 根目录路径，子文件夹名为标签名
+            max_workers: 并行加载的线程数
+            transform: 数据变换函数
+        """
+        self.root_dir = root_dir
+        self.preload = preload
+        self.transform = transform
+        self.max_workers = max_workers if max_workers is not None else os.cpu_count()
+
+        self.file_paths = []
+        self.labels = []
+        self._setup_data()
+
+        self.preloaded_data = [None] * len(self.file_paths)
+        if self.preload:
+            self._parallel_preload()
+
+    def _setup_data(self):
+        """遍历目录结构，收集.pt文件路径和标签"""
+        label_dict = {'NORM': 0, 'TUM': 1}
+        tum_count = 0
+        norm_count = 0
+        for label_name in os.listdir(self.root_dir):
+            label_dir = os.path.join(self.root_dir, label_name)
+            if os.path.isdir(label_dir):
+                for file_name in os.listdir(label_dir):
+                    if file_name.endswith('.pt'):
+                        file_path = os.path.join(label_dir, file_name)
+                        label = label_dict[label_name]
+
+                        # if not label and norm_count > tum_count:
+                        #     continue
+                        tum_count += 1 if label else 0
+                        norm_count += 1 if not label else 0
+                        self.file_paths.append(file_path)
+                        self.labels.append(label_dict[label_name])
+        print(f'TUM nums: {tum_count}, NORM nums: {norm_count}')
+
+    def _load_single_item(self, idx: int):
+        """加载单个数据项"""
+        file_path = self.file_paths[idx]
+        label = self.labels[idx]
+
+        try:
+            tensor = torch.load(file_path)
+            tensor = tensor.view(-1)  # 展平张量
+
+            if self.transform:
+                tensor = self.transform(tensor)
+
+            return tensor, label
+        except Exception as e:
+            print(f"加载文件 {file_path} 失败: {e}")
+            return None
+
+    def _parallel_preload(self):
+        """使用多线程并行预加载所有数据，并显示进度条"""
+        print(f"开始并行预加载 {len(self.file_paths)} 个数据项...")
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # 提交所有加载任务
+            future_to_idx = {
+                executor.submit(self._load_single_item, idx): idx
+                for idx in range(len(self.file_paths))
+            }
+
+            # 使用tqdm显示进度
+            with tqdm(total=len(self.file_paths), desc="加载数据") as pbar:
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            self.preloaded_data[idx] = result
+                    except Exception as e:
+                        print(f"加载索引 {idx} 的数据时发生错误: {e}")
+                    finally:
+                        pbar.update(1)
+
+        print("数据预加载完成!")
+
+    def __getitem__(self, idx: int):
+        """从内存缓存中获取数据项"""
+        if self.preload:
+            return self.preloaded_data[idx]
+        else:
+            return self._load_single_item(idx)
+
+    def __len__(self) -> int:
         return len(self.file_paths)
 
 
@@ -274,8 +372,8 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
         # 保存最佳模型
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            torch.save(model.state_dict(), 'best_model.pth')
-    torch.save(model.state_dict(), 'last_model.pth')
+            torch.save(model.state_dict(), 'nct_best_model.pth')
+    torch.save(model.state_dict(), 'nct_last_model.pth')
 
     return train_losses, val_accuracies
 
@@ -303,8 +401,9 @@ def evaluate_model(model, data_loader, device):
 
     all_probs = np.concatenate(all_probs)
     all_targets = np.concatenate(all_targets)
-    threshold = obtain_optimal_threshold(all_targets, all_probs)
     _auc = roc_auc_score(all_targets, all_probs)
+    # threshold = obtain_optimal_threshold(all_targets, all_probs)
+    threshold = 0.5
 
     predictions = (all_probs >= threshold).astype(np.int64)  # 确保类型一致
     accuracy = 100.0 * accuracy_score(all_targets, predictions)
@@ -349,26 +448,19 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    train_data = '/NAS2/Data1/lbliao/Data/CRC/协和/cls/feats/train'
-    val_data = '/NAS2/Data1/lbliao/Data/CRC/协和/cls/feats/val'
-    test_data = '/NAS2/Data1/lbliao/Data/CRC/协和/cls/feats/test'
+    train_data = '/NAS3/lbliao/Data/CRC/协和/cls/nct_feat/train'
+    val_data = '/NAS3/lbliao/Data/CRC/协和/cls/nct_feat/val'
+    test_data = '/NAS3/lbliao/Data/CRC/协和/cls/feats/test'
     batch_size = 1024
     num_epochs = 50
     learning_rate = 0.001
 
-    # train_files, train_labels = prepare_data(train_data)
-    # print(f"Total train samples: {len(train_files)}")
-    # val_files, val_labels = prepare_data(val_data)
-    # print(f"Total val samples: {len(val_files)}")
-    test_files, test_labels = prepare_data(test_data)
-    print(f"Total test samples: {len(test_files)}")
+    train_dataset = PTDataset(train_data, preload=True)
+    val_dataset = PTDataset(val_data, preload=True)
+    test_dataset = PTDataset(test_data, preload=True)
 
-    # train_dataset = TensorDataset(train_files, train_labels, preload=True)
-    # val_dataset = TensorDataset(val_files, val_labels, preload=True)
-    test_dataset = TensorDataset(test_files, test_labels, preload=True)
-
-    # train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8 if torch.cuda.is_available() else 0)
-    # val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8 if torch.cuda.is_available() else 0)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8 if torch.cuda.is_available() else 0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8 if torch.cuda.is_available() else 0)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=8 if torch.cuda.is_available() else 0)
 
     # 初始化模型、损失函数和优化器
@@ -380,9 +472,8 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # 训练模型
-    # train_losses, val_accuracies = train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs, device)
+    train_losses, val_accuracies = train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs, device)
 
     # 加载最佳模型并在验证集上做最终评估
-    model.load_state_dict(torch.load('best_model.pth'))
+    model.load_state_dict(torch.load('nct_best_model.pth'))
     evaluate_model(model, test_loader, device)
-    # final_val_acc = evaluate_model_with_optimal_threshold(model, test_loader, device)
