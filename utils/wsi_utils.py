@@ -12,7 +12,7 @@ import threading
 
 
 class WSI_Dataset(Dataset):
-    def __init__(self, dataset_info_csv_path, group, preload=True, num_workers=None, max_memory_gb=50):
+    def __init__(self, dataset_info_csv_path, group, preload=True, num_workers=None, max_memory_gb=100):
         assert group in ['train', 'val', 'test'], 'group must be in [train,val,test]'
 
         self.dataset_info_csv_path = dataset_info_csv_path

@@ -31,7 +31,7 @@ def get_time():
 
     now = datetime.now(tz)
 
-    return now
+    return now.strftime("%Y-%m-%d-%H-%M")
 def set_global_seed(seed):
     random.seed(seed)
     np.random.seed(seed)

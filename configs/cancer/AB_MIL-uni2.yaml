@@ -1,38 +1,34 @@
 General:
-    MODEL_NAME: CLAM_MB_MIL
+    MODEL_NAME: AB_MIL
     seed: 42
     num_classes: 2
     num_epochs: 100
     device: 0
     num_workers: 4
-    best_model_metric: macro_auc 
+    best_model_metric: macro_auc  
     earlystop: 
         use: False
         patience: 5
         metric: macro_auc
 
 Dataset:
-    DATASET_NAME: uni
+    DATASET_NAME: uni2
     # to use train-val-test, open dataset_csv_dir
     # to use k-fold train-val/k-fold train-val then test, open dataset_root_dir
-
+    
     # dataset_csv_path: /path/to/your/dataset.csv
-    dataset_root_dir: datasets/cancer/0923/uni
+    dataset_root_dir: datasets/cancer/uni2
 
 Logs:
     log_root_dir: result/cancer
 
+
 Model:
-    in_dim: 1024 # depend on the pt dimensions，such resnet50——>1024 vit_s——>384
+    in_dim: 1536  # depend on the pt dimensions，such resnet50——>1024 vit_s——>384
+    L: 512
+    D: 128
     dropout: 0.1
     act: relu  # relu or silu gule
-    k_sample: 8
-    size_arg: small  
-    instance_loss_fn: ce
-    subtyping: True
-    instance_eval: True
-    gate: True
-    bag_weight: 0.7
     optimizer:
         which: adam    # adam or adamw
         adam_config:
@@ -41,7 +37,7 @@ Model:
         adamw_config:
             lr: 0.0002
             weight_decay: 0.00001
-    criterion: ce  # ce
+    criterion: ce  
     scheduler:
         warmup: 2
         which: step  # [step, cosine,multi_step,exponential]
@@ -56,4 +52,3 @@ Model:
         cosine_config:
             T_max: 10 # interval of cosine annealing, begin after warmup
             eta_min: 0.0001
-

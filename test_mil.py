@@ -1,4 +1,7 @@
 import argparse
+
+import pandas as pd
+
 from utils.yaml_utils import read_yaml
 from torch.utils.data import DataLoader
 from utils.loop_utils import val_loop,clam_val_loop,ds_val_loop,dtfd_val_loop
@@ -47,16 +50,16 @@ def test(args):
     # CLAM_SB_MIL and CLAM_MB_MIL models have different val loop pipeline (has instance loss)
     if yaml_args.General.MODEL_NAME == 'CLAM_MB_MIL':
         bag_weight = yaml_args.Model.bag_weight
-        test_loss,test_metrics = clam_val_loop(device,num_classes,mil_model,test_dataloader,criterion,bag_weight)
+        test_loss,test_metrics,test_result = clam_val_loop(device,num_classes,mil_model,test_dataloader,criterion,bag_weight)
     elif yaml_args.General.MODEL_NAME == 'CLAM_SB_MIL':
         bag_weight = yaml_args.Model.bag_weight
-        test_loss,test_metrics = clam_val_loop(device,num_classes,mil_model,test_dataloader,criterion,bag_weight)
+        test_loss,test_metrics,test_result = clam_val_loop(device,num_classes,mil_model,test_dataloader,criterion,bag_weight)
     elif yaml_args.General.MODEL_NAME == 'DS_MIL':
-        test_loss,test_metrics =  ds_val_loop(device,num_classes,mil_model,test_dataloader,criterion)
+        test_loss,test_metrics,test_result =  ds_val_loop(device,num_classes,mil_model,test_dataloader,criterion)
     elif yaml_args.General.MODEL_NAME == 'DTFD_MIL':
-        test_loss,test_metrics =  dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,yaml_args.Model.num_Group,yaml_args.Model.grad_clipping,yaml_args.Model.distill,yaml_args.Model.total_instance)
+        test_loss,test_metrics,test_result =  dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,yaml_args.Model.num_Group,yaml_args.Model.grad_clipping,yaml_args.Model.distill,yaml_args.Model.total_instance)
     else:
-        test_loss,test_metrics =  val_loop(device,num_classes,mil_model,test_dataloader,criterion)
+        test_loss,test_metrics,test_result =  val_loop(device,num_classes,mil_model,test_dataloader,criterion)
     
     FAIL = '\033[91m'
     ENDC = '\033[0m'
@@ -75,6 +78,9 @@ def test(args):
     with open(test_log_path,'w') as f:
         f.write(str(log_to_save))
     print(f"Test log saved at: {test_log_path}")
+    test_result_path = os.path.join(test_log_dir,f'Test_Result_{model_name}.csv')
+    result_to_save = pd.DataFrame(test_result)
+    result_to_save.to_csv(test_result_path,index=False,encoding='utf-8-sig')
     
 
     

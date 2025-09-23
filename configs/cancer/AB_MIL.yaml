@@ -12,12 +12,12 @@ General:
         metric: macro_auc
 
 Dataset:
-    DATASET_NAME: 0829
+    DATASET_NAME: uni
     # to use train-val-test, open dataset_csv_dir
     # to use k-fold train-val/k-fold train-val then test, open dataset_root_dir
     
     # dataset_csv_path: /path/to/your/dataset.csv
-    dataset_root_dir: datasets/cancer/0829
+    dataset_root_dir: datasets/cancer/uni
 
 Logs:
     log_root_dir: result/cancer

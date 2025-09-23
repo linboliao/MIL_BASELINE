@@ -5,10 +5,55 @@ from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, reca
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, cohen_kappa_score, confusion_matrix
 import time
 import torch.nn as nn
+def optimal_threshold(probs,labels):
+    import numpy as np
+    positive_probs = probs[:, 1].detach().numpy()  # 正类概率
+    labels_np = labels.numpy()
 
+    # 计算ROC曲线
+    fpr, tpr, thresholds = roc_curve(labels_np, positive_probs)
+
+    # 计算约登指数 (Youden's J statistic) 并找到使其最大的阈值
+    youden_j = tpr - fpr
+    optimal_idx = np.argmax(youden_j)
+    optimal_threshold = thresholds[optimal_idx]
+
+    # 使用最佳阈值进行预测
+    predictions = (positive_probs >= optimal_threshold).astype(int)
+
+    # 计算在该阈值下的各项指标
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+
+    acc = accuracy_score(labels_np, predictions)
+    precision = precision_score(labels_np, predictions, zero_division=0)
+    recall = recall_score(labels_np, predictions, zero_division=0)  # 召回率即灵敏度
+    f1 = f1_score(labels_np, predictions, zero_division=0)
+    cm_optimal = confusion_matrix(labels_np, predictions)
+
+    # 计算特异度 (Specificity)
+    tn, fp, fn, tp = confusion_matrix(labels_np, predictions).ravel()
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+
+    # 组织返回结果
+    results = {
+        'optimal_threshold': optimal_threshold,
+        'optimal_threshold_index': optimal_idx,
+        'accuracy': acc,
+        'precision': precision,
+        'recall': recall,  # 灵敏度 (Sensitivity)
+        'specificity': specificity,
+        'f1_score': f1,
+        'youden_index': youden_j[optimal_idx],  # 最佳阈值处的约登指数
+        'cm':cm_optimal,
+        'fpr': fpr,
+        'tpr': tpr
+    }
+    print(results)
+    return results
 def cal_scores(logits, labels, num_classes):       # logits:[batch_size, num_classes]   labels:[batch_size, ]
     logits = torch.tensor(logits)
     labels = torch.tensor(labels)
+    # optimal_threshold(logits, labels)
     predicted_classes = torch.argmax(logits, dim=1)
     accuracy = accuracy_score(labels.numpy(), predicted_classes.numpy())
     probs = F.softmax(logits, dim=1)
@@ -66,6 +111,7 @@ def train_loop(device,model,loader,criterion,optimizer,scheduler):
 def val_loop(device,num_classes,model,loader,criterion,retrun_WSI_feature = False,return_WSI_attn=False):
     model.eval()
     val_loss_log = 0
+    val_result = []
     labels = []
     bag_predictions_after_normal = []
     model = model.to(device)
@@ -90,6 +136,7 @@ def val_loop(device,num_classes,model,loader,criterion,retrun_WSI_feature = Fals
             val_logits = val_logits.unsqueeze(0)
             val_loss = criterion(val_logits,label)
             val_loss_log += val_loss.item()
+            val_result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
     if retrun_WSI_feature:
         WSI_features = torch.cat(WSI_features, dim=0).cpu().numpy()
         return WSI_features
@@ -97,7 +144,7 @@ def val_loop(device,num_classes,model,loader,criterion,retrun_WSI_feature = Fals
         return WSI_attns
     val_metrics= cal_scores(bag_predictions_after_normal,labels,num_classes)
     val_loss_log /= len(loader)
-    return val_loss_log,val_metrics
+    return val_loss_log,val_metrics,val_result
 
 def ac_train_loop(device,model,loader,criterion,optimizer,scheduler,n_token):
     start = time.time()
