@@ -33,8 +33,6 @@ def main(arg):
         k_fold_csv_paths = sorted([os.path.join(dataset_root_dir,path) for path in os.listdir(dataset_root_dir)])
         process_time = get_time()
         for k_idx,k_fold_csv_path in enumerate(k_fold_csv_paths):
-            if k_idx < 3:
-                continue
             args.Dataset.dataset_csv_path = k_fold_csv_path
             now_fold = k_idx+1
             args.Dataset.now_fold = now_fold

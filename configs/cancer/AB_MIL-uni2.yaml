@@ -17,7 +17,7 @@ Dataset:
     # to use k-fold train-val/k-fold train-val then test, open dataset_root_dir
     
     # dataset_csv_path: /path/to/your/dataset.csv
-    dataset_root_dir: datasets/cancer/uni2
+    dataset_root_dir: datasets/cancer/0923/uni2
 
 Logs:
     log_root_dir: result/cancer
