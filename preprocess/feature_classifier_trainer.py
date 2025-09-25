@@ -131,7 +131,6 @@ class TensorDataset(Dataset):
             if load_result is not None:
                 tensor, label, _ = load_result
             else:
-                # 处理加载失败，例如返回一个空张量或抛出异常
                 raise RuntimeError(f"无法加载索引 {idx} 的数据")
 
         # 应用变换（如果有）
