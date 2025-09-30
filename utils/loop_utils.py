@@ -165,6 +165,7 @@ def infer_loop(device, model, loader):
             val_logits = model(bag)['logits']
             val_logits = val_logits.squeeze(0)
             bag_predictions_after_normal.append(torch.softmax(val_logits, 0).cpu().numpy())
+            val_logits = val_logits.unsqueeze(0)
             result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'probs': bag_predictions_after_normal[-1], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
     return result
 
