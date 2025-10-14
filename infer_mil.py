@@ -4,7 +4,7 @@ import pandas as pd
 
 from utils.yaml_utils import read_yaml
 from torch.utils.data import DataLoader
-from utils.loop_utils import infer_loop, dtfd_val_loop
+from utils.loop_utils import infer_loop, dtfd_val_loop, ds_infer_loop
 import warnings
 from utils.wsi_utils import WSI_Dataset, CDP_MIL_WSI_Dataset, LONG_MIL_WSI_Dataset
 import torch
@@ -50,6 +50,8 @@ def test(args):
 
     if yaml_args.General.MODEL_NAME == 'DTFD_MIL':
         result = dtfd_val_loop(device, num_classes, model_list, test_dataloader, criterion, yaml_args.Model.num_Group, yaml_args.Model.grad_clipping, yaml_args.Model.distill, yaml_args.Model.total_instance)
+    elif yaml_args.General.MODEL_NAME == 'DS_MIL':
+        result =  ds_infer_loop(device, mil_model, test_dataloader)
     else:
         result = infer_loop(device, mil_model, test_dataloader)
 

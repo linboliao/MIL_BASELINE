@@ -170,6 +170,26 @@ def infer_loop(device, model, loader):
     return result
 
 
+def ds_infer_loop(device, model, loader):
+    model.eval()
+    labels = []
+    result = []
+    bag_predictions_after_normal = []
+    model = model.to(device)
+    with torch.autograd.set_detect_anomaly(True):
+        for i, data in enumerate(loader):
+            label = data[1].long().to(device)
+            labels.append(label.cpu().numpy())
+            bag = data[0].to(device).float()
+            forward_return = model(bag)
+            # max_prediction = forward_return['max_prediction']
+            val_logits = forward_return['logits']
+            bag_predictions_after_normal.append(torch.softmax(val_logits[0], 0).cpu().detach().numpy())
+            val_logits = val_logits.unsqueeze(0)
+            result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'probs': bag_predictions_after_normal[-1], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
+    return result
+
+
 def ac_train_loop(device, model, loader, criterion, optimizer, scheduler, n_token):
     start = time.time()
     model.train()
