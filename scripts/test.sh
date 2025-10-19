@@ -1,10 +1,10 @@
 export PYTHONPATH=../../MIL_BASELINE:$PYTHONPATH
 export LD_LIBRARY_PATH=/home/lbliao/anaconda3/envs/clam/lib:$LD_LIBRARY_PATH
 
-config=configs/cancer/AB_MIL-uni2.yaml
-test_dataset_csv=datasets/cancer/uni2_test.csv
-base_dir=result/cancer/uni2/AB_MIL/seed_42_2025-09-23-09-47
-gpu=2
+config=configs/cancer/TRANS_MIL-h-optimus-1.yaml
+test_dataset_csv=datasets/cancer/0_448/h-optimus-1_test.csv
+base_dir=result/cancer/0_448/h-optimus-1/TRANS_MIL/seed_42_2025-10-19-16-35
+gpu=0
 cd ../
 
 for fold in {1..5}; do

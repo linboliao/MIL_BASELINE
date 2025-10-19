@@ -2,7 +2,7 @@ General:
     MODEL_NAME: CLAM_MB_MIL
     seed: 42
     num_classes: 2
-    num_epochs: 100
+    num_epochs: 50
     device: 0
     num_workers: 4
     best_model_metric: macro_auc 
@@ -12,15 +12,15 @@ General:
         metric: macro_auc
 
 Dataset:
-    DATASET_NAME: uni
+    DATASET_NAME: h-optimus-1
     # to use train-val-test, open dataset_csv_dir
     # to use k-fold train-val/k-fold train-val then test, open dataset_root_dir
 
     # dataset_csv_path: /path/to/your/dataset.csv
-    dataset_root_dir: datasets/cancer/0923/uni
+    dataset_root_dir: datasets/cancer/0_448/h-optimus-1
 
 Logs:
-    log_root_dir: result/cancer
+    log_root_dir: result/cancer/0_448
 
 Model:
     in_dim: 1536 # depend on the pt dimensions，such resnet50——>1024 vit_s——>384

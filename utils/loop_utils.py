@@ -339,10 +339,16 @@ def dgr_train_loop(device, model, loader, criterion, optimizer, scheduler, now_e
 
 
 def clam_val_loop(device, num_classes, model, loader, criterion, bag_weight, retrun_WSI_feature=False, return_WSI_attn=False):
+    # 如果 bag_weight 是 dict 或 addict.Dict，就取里面的字段
+    if isinstance(bag_weight, dict) or hasattr(bag_weight, 'bag_weight'):
+        bag_weight = bag_weight.get('bag_weight')
+    # 确保是 float
+    bag_weight = float(bag_weight)
     model.eval()
     val_loss_log = 0
     labels = []
     bag_predictions_after_normal = []
+    val_result = []
     model = model.to(device)
     WSI_features = []
     WSI_attns = []
@@ -360,14 +366,16 @@ def clam_val_loop(device, num_classes, model, loader, criterion, bag_weight, ret
                 WSI_attns.append(WSI_attn)
                 continue
             forward_return = model(bag, label=label)
-            instance_loss = forward_return['instance_loss']
+            # instance_loss = forward_return['instance_loss']
             val_logits = forward_return['logits']
             val_logits = val_logits.squeeze(0)
             bag_predictions_after_normal.append(torch.softmax(val_logits, 0).cpu().numpy())
             val_logits = val_logits.unsqueeze(0)
             val_loss = criterion(val_logits, label)
+            instance_loss = forward_return.get('instance_loss', 0.0)
             total_loss = val_loss * bag_weight + instance_loss * (1 - bag_weight)
             val_loss_log += total_loss.item()
+            val_result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
     if retrun_WSI_feature:
         WSI_features = torch.cat(WSI_features, dim=0).cpu().numpy()
         return WSI_features
@@ -375,7 +383,7 @@ def clam_val_loop(device, num_classes, model, loader, criterion, bag_weight, ret
         return WSI_attns
     val_metrics = cal_scores(bag_predictions_after_normal, labels, num_classes)
     val_loss_log /= len(loader)
-    return val_loss_log, val_metrics
+    return val_loss_log, val_metrics, val_result
 
 
 def ds_train_loop(device, model, loader, criterion, optimizer, scheduler):
@@ -409,6 +417,7 @@ def ds_train_loop(device, model, loader, criterion, optimizer, scheduler):
 def ds_val_loop(device, num_classes, model, loader, criterion, retrun_WSI_feature=False, return_WSI_attn=False):
     WSI_features = []
     WSI_attns = []
+    val_result = []
     labels = []
     bag_predictions_after_normal = []
     val_loss_log = 0
@@ -435,6 +444,7 @@ def ds_val_loop(device, num_classes, model, loader, criterion, retrun_WSI_featur
             loss_max = criterion(max_prediction, label)
             val_loss = 0.5 * loss_bag + 0.5 * loss_max
             val_loss_log += val_loss.item()
+            val_result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
     if retrun_WSI_feature:
         WSI_features = torch.cat(WSI_features, dim=0).cpu().detach().numpy()
         return WSI_features
@@ -442,7 +452,7 @@ def ds_val_loop(device, num_classes, model, loader, criterion, retrun_WSI_featur
         return WSI_attns
     val_loss_log /= len(loader)
     val_metrics = cal_scores(bag_predictions_after_normal, labels, num_classes)
-    return val_loss_log, val_metrics
+    return val_loss_log, val_metrics, val_result
 
 
 def get_cam_1d(classifier, features):
