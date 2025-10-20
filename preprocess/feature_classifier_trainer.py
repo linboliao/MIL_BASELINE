@@ -260,7 +260,6 @@ parser.add_argument('--learning_rate', type=float, default=0.001)
 args = parser.parse_args()
 
 if __name__ == '__main__':
-    os.environ['CUDA_VISIBLE_DEVICES'] = '5'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
