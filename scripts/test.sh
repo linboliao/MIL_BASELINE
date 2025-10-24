@@ -1,9 +1,9 @@
 export PYTHONPATH=../../MIL_BASELINE:$PYTHONPATH
 export LD_LIBRARY_PATH=/home/lbliao/anaconda3/envs/clam/lib:$LD_LIBRARY_PATH
 
-config=configs/cancer/TRANS_MIL-h-optimus-1.yaml
+config=configs/cancer/CLAM_MB_MIL-h-optimus-1.yaml
 test_dataset_csv=datasets/cancer/0_448/h-optimus-1_test.csv
-base_dir=result/cancer/0_448/h-optimus-1/TRANS_MIL/seed_42_2025-10-19-16-35
+base_dir=result/cancer/0_448/h-optimus-1/CLAM_MB_MIL/seed_42_2025-10-19-20-59
 gpu=0
 cd ../
 

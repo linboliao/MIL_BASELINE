@@ -2,7 +2,7 @@ General:
     MODEL_NAME: CLAM_MB_MIL
     seed: 42
     num_classes: 8
-    num_epochs: 100
+    num_epochs: 50
     device: 0
     num_workers: 4
     best_model_metric: macro_auc
@@ -17,10 +17,10 @@ Dataset:
     # to use k-fold train-val/k-fold train-val then test, open dataset_root_dir
     
     # dataset_csv_path: datasets/gleason/radical
-    dataset_root_dir: datasets/gleason/radical
+    dataset_root_dir: datasets/gleason/0_448/radical
 
 Logs:
-    log_root_dir: result/gleason
+    log_root_dir: result/gleason/0_448
 
 Model:
     in_dim: 1536 # depend on the pt dimensions，such resnet50——>1024 vit_s——>384
