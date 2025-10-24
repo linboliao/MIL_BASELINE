@@ -2,7 +2,7 @@ General:
     MODEL_NAME: AB_MIL
     seed: 42
     num_classes: 2
-    num_epochs: 100
+    num_epochs: 10
     device: 0
     num_workers: 8
     best_model_metric: macro_auc
@@ -12,19 +12,19 @@ General:
         metric: macro_auc
 
 Dataset:
-    DATASET_NAME: uni
+    DATASET_NAME: p-dMMR
     # to use train-val-test, open dataset_csv_dir
     # to use k-fold train-val/k-fold train-val then test, open dataset_root_dir
     
-#    dataset_csv_path: path/to/csv
-    dataset_root_dir: datasets/ls/xh/uni
+    # dataset_csv_path: path/to/csv
+    dataset_root_dir: datasets/p-dMMR/cls
 
 Logs:
-    log_root_dir: logs/ls/xh
+    log_root_dir: result
 
 
 Model:
-    in_dim: 1024  # depend on the pt dimensions，such resnet50——>1024 vit_s——>384
+    in_dim: 1536  # depend on the pt dimensions，such resnet50——>1024 vit_s——>384
     L: 512
     D: 128
     dropout: 0.1

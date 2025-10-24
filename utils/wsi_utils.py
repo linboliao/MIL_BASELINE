@@ -13,7 +13,7 @@ import concurrent.futures
 
 
 class WSI_Dataset(Dataset):
-    def __init__(self, dataset_info_csv_path, group, preload=True, num_workers=None, max_memory_gb=50):
+    def __init__(self, dataset_info_csv_path, group, preload=False, num_workers=None, max_memory_gb=50):
         assert group in ['train', 'val', 'test'], 'group must be in [train,val,test]'
 
         self.dataset_info_csv_path = dataset_info_csv_path
@@ -27,27 +27,11 @@ class WSI_Dataset(Dataset):
         self.stop_preload = False  # 停止预加载标志
         self.preload_lock = threading.Lock()  # 内存统计锁
 
-        # 按文件大小排序（优先加载小文件）
-        self._sort_by_file_size()
 
         self.num_workers = num_workers or min(32, (os.cpu_count() or 4))
 
         if preload and not self.is_None_Dataset():
             self._parallel_preload()
-
-    def _sort_by_file_size(self):
-        """按文件大小升序排序，优先加载小文件以最大化利用内存"""
-        sizes_and_indices = []
-        for idx, path in enumerate(self.slide_path_list):
-            try:
-                size = os.path.getsize(path)
-                sizes_and_indices.append((size, idx))
-            except Exception:
-                sizes_and_indices.append((0, idx))
-
-        # 按文件大小升序排序
-        sizes_and_indices.sort(key=lambda x: x[0])
-        self.sorted_indices = [idx for _, idx in sizes_and_indices]
 
     def _parallel_preload(self):
         """并行预加载（含内存上限控制）"""
@@ -57,17 +41,14 @@ class WSI_Dataset(Dataset):
         self.preloaded_data = [None] * len(self.slide_path_list)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            # 按排序顺序提交任务
             future_to_idx = {}
-            for idx in self.sorted_indices:
+            for idx in range(len(self.slide_path_list)):
                 if self.stop_preload:
                     break  # 提前终止
                 future = executor.submit(self._load_single_item, idx)
                 future_to_idx[future] = idx
 
-            for future in tqdm(concurrent.futures.as_completed(future_to_idx),
-                               total=len(future_to_idx),
-                               desc="预加载进度"):
+            for future in tqdm(concurrent.futures.as_completed(future_to_idx), total=len(future_to_idx), desc="预加载进度"):
                 idx = future_to_idx[future]
                 try:
                     item = future.result()
