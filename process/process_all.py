@@ -13,6 +13,9 @@ def process(args,yaml_path,options):
     elif args.General.MODEL_NAME == 'AB_MIL':
         from .AB_MIL.process_ab_mil import process_AB_MIL
         process_AB_MIL(args)
+    elif args.General.MODEL_NAME == 'AB_MIL_Clinical':
+        from .AB_MIL_Clinical.process_ab_mil_clinical import process_AB_MIL_Clinical
+        process_AB_MIL_Clinical(args)
     elif args.General.MODEL_NAME == 'GATE_AB_MIL':
         from .GATE_AB_MIL.process_gate_ab_mil import process_GATE_AB_MIL
         process_GATE_AB_MIL(args)

@@ -1,114 +1,32 @@
-import threading
+import os
 from pathlib import Path
 
-import pandas as pd
-import math
-import os
-import numpy as np
 import h5py
+import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import Dataset
-from tqdm import tqdm
-import concurrent.futures
 
 
 class WSI_Dataset(Dataset):
-    def __init__(self, dataset_info_csv_path, group, preload=False, num_workers=None, max_memory_gb=50):
+    def __init__(self, dataset_info_csv_path, group):
         assert group in ['train', 'val', 'test'], 'group must be in [train,val,test]'
-
         self.dataset_info_csv_path = dataset_info_csv_path
         self.dataset_df = pd.read_csv(self.dataset_info_csv_path)
         self.slide_path_list = self.dataset_df[group + '_slide_path'].dropna().to_list()
         self.labels_list = self.dataset_df[group + '_label'].dropna().to_list()
-        self.preloaded = False
-        self.preloaded_data = []  # 存储预加载数据
-        self.max_memory_bytes = max_memory_gb * 1024 ** 3  # 50GB上限
-        self.total_loaded_size = 0  # 已加载内存统计
-        self.stop_preload = False  # 停止预加载标志
-        self.preload_lock = threading.Lock()  # 内存统计锁
-
-
-        self.num_workers = num_workers or min(32, (os.cpu_count() or 4))
-
-        if preload and not self.is_None_Dataset():
-            self._parallel_preload()
-
-    def _parallel_preload(self):
-        """并行预加载（含内存上限控制）"""
-        print(f"开始并行预加载（上限: {self.max_memory_bytes / (1024 ** 3):.1f}GB）...")
-
-        # 初始化预加载数组（保持原始索引位置）
-        self.preloaded_data = [None] * len(self.slide_path_list)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            future_to_idx = {}
-            for idx in range(len(self.slide_path_list)):
-                if self.stop_preload:
-                    break  # 提前终止
-                future = executor.submit(self._load_single_item, idx)
-                future_to_idx[future] = idx
-
-            for future in tqdm(concurrent.futures.as_completed(future_to_idx), total=len(future_to_idx), desc="预加载进度"):
-                idx = future_to_idx[future]
-                try:
-                    item = future.result()
-                    if item is not None:
-                        self._update_memory_usage(idx, item)
-                except Exception as e:
-                    print(f"加载索引 {idx} 失败: {e}")
-
-        self.preloaded = True
-        success_count = sum(1 for item in self.preloaded_data if item is not None)
-        print(f"预加载完成! 成功加载 {success_count}/{len(self.slide_path_list)} 个样本")
-        print(f"内存占用: {self.total_loaded_size / (1024 ** 3):.2f}GB")
-
-    def _load_single_item(self, idx):
-        """带内存检查的单个样本加载"""
-        # 检查全局停止标志
-        if self.stop_preload:
-            return None
-
-        slide_path = self.slide_path_list[idx]
-        label = int(self.labels_list[idx])
-
-        try:
-            file_size = os.path.getsize(slide_path)
-            with self.preload_lock:
-                if self.total_loaded_size + file_size > self.max_memory_bytes:
-                    return None
-
-            # 实际加载数据
-            feat = torch.load(slide_path)
-            if len(feat.shape) == 3:
-                feat = feat.squeeze(0)
-
-            label_tensor = torch.tensor(label)
-            return feat, label_tensor, Path(slide_path).stem
-
-        except Exception as e:
-            print(f"文件加载失败: {slide_path}, {e}")
-            return None
-
-    def _update_memory_usage(self, idx, item):
-        """更新内存统计并存入预加载数组"""
-        feat, label_tensor, _ = item
-        sample_size = feat.numel() * feat.element_size() + label_tensor.numel() * label_tensor.element_size()
-
-        with self.preload_lock:
-            if self.total_loaded_size + sample_size <= self.max_memory_bytes:
-                self.preloaded_data[idx] = item
-                self.total_loaded_size += sample_size
-            else:
-                self.stop_preload = True  # 触发全局停止
-
-    def __getitem__(self, idx):
-        if self.preloaded and self.preloaded_data[idx] is not None:
-            return self.preloaded_data[idx]
-        else:
-            return self._load_single_item(idx)
 
     def __len__(self):
         return len(self.slide_path_list)
+
+    def __getitem__(self, idx):
+        slide_path = self.slide_path_list[idx]
+        label = int(self.labels_list[idx])
+        label = torch.tensor(label)
+        feat = torch.load(slide_path)
+        if len(feat.shape) == 3:
+            feat = feat.squeeze(0)
+        return feat, label, Path(slide_path).stem
 
     def is_None_Dataset(self):
         return (self.__len__() == 0)
@@ -148,3 +66,59 @@ class LONG_MIL_WSI_Dataset(WSI_Dataset):
     def _find_h5_path_by_slide_name(self, slide_name, h5_paths_list):
         h5_dict = {os.path.basename(h5_path).replace('.h5', ''): h5_path for h5_path in h5_paths_list}
         return h5_dict.get(slide_name, None)
+
+
+class WSI_Clinical_Dataset(WSI_Dataset):
+
+    def __init__(self, dataset_info_csv_path, group, normalize_clinical=True):
+        assert group in ['train', 'val', 'test'], 'group must be in [train,val,test]'
+
+        self.dataset_info_csv_path = dataset_info_csv_path
+        self.group = group
+        self.dataset_df = pd.read_csv(self.dataset_info_csv_path)
+
+        self.slide_path_list = self.dataset_df[group + '_slide_path'].dropna().to_list()
+        self.labels_list = self.dataset_df[group + '_label'].dropna().astype(int).to_list()
+
+        self.clinical_cols = [f'{group}_MLH-1', f'{group}_MSH-2', f'{group}_MSH-6', f'{group}_PMS-2', f'{group}_Age', f'{group}_Sex', f'{group}_family_history', f'{group}_tumor_location']
+
+        self.clinical_features = self.dataset_df[self.clinical_cols].values.astype(np.float32)
+
+        self.clinical_features = np.nan_to_num(self.clinical_features, nan=0.0)
+
+        if normalize_clinical:
+            self._normalize_features()
+
+    def _normalize_features(self):
+        # Age标准化
+        age_idx = 4
+        age_data = self.clinical_features[:, age_idx]
+        if np.std(age_data) > 1e-8:
+            mean = np.mean(age_data)
+            std = np.std(age_data)
+            self.clinical_features[:, age_idx] = (age_data - mean) / std
+
+        # tumor_location归一化到[0,1]
+        tumor_idx = 7
+        tumor_data = self.clinical_features[:, tumor_idx]
+        max_val = np.max(tumor_data)
+        if max_val > 0:
+            self.clinical_features[:, tumor_idx] = tumor_data / max_val
+
+    def __len__(self):
+        return len(self.slide_path_list)
+
+    def __getitem__(self, idx):
+        slide_path = self.slide_path_list[idx]
+        feat = torch.load(slide_path)
+        if len(feat.shape) == 3:
+            feat = feat.squeeze(0)
+
+        clinical = torch.tensor(self.clinical_features[idx], dtype=torch.float32)
+
+        label = torch.tensor(self.labels_list[idx], dtype=torch.long)
+
+        return feat, clinical, label
+
+    def is_None_Dataset(self):
+        return len(self) == 0
