@@ -1,65 +1,87 @@
-import pandas as pd
-import math
 import os
 import numpy as np
+import pandas as pd
 import h5py
 import torch
+import concurrent.futures
+from pathlib import Path
 from torch.utils.data import Dataset
+from tqdm import tqdm
+
+import threading
+
+import os
+import pandas as pd
+import torch
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 
-class WSI_Dataset(Dataset):
-    def __init__(self, dataset_info_csv_path, group):
-        assert group in ['train', 'val', 'test'], 'group must be in [train,val,test]'
-        self.dataset_info_csv_path = dataset_info_csv_path
-        self.dataset_df = pd.read_csv(self.dataset_info_csv_path)
-        self.slide_path_list = self.dataset_df[group + '_slide_path'].dropna().to_list()
-        self.labels_list = self.dataset_df[group + '_label'].dropna().to_list()
+class WSI_Dataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_info_csv_path, group, preload=True, num_workers=None, max_memory_gb=50):
+        assert group in ['train', 'val', 'test']
+
+        df = pd.read_csv(dataset_info_csv_path)
+        self.slide_path_list = df[group + '_slide_path'].dropna().tolist()
+        self.labels_list = df[group + '_label'].dropna().tolist()
+        self.preloaded_data = [None] * len(self.slide_path_list)
+        self.max_memory = max_memory_gb * (1024 ** 3)
+        self.used_memory = 0
+
+        if preload and self.slide_path_list:
+            self._preload(num_workers or min(32, os.cpu_count() or 4))
+
+    def _preload(self, num_workers):
+        """并行预加载数据"""
+        print(f"开始预加载数据 (内存上限: {self.max_memory / (1024 ** 3):.1f}GB)...")
+
+        sorted_indices = self._sorted_indices()
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(self._load_item, i): i for i in sorted_indices}
+
+            for future in tqdm(as_completed(futures), total=len(futures), ncols=100, desc="预加载进度"):
+                idx = futures[future]
+                data = future.result()
+
+                if data and self.used_memory < self.max_memory:
+                    self.preloaded_data[idx] = data
+                    self.used_memory += data[0].numel() * data[0].element_size()
+
+        loaded_count = sum(1 for item in self.preloaded_data if item is not None)
+        print(f"预加载完成! 成功加载 {loaded_count}/{len(self.slide_path_list)} 个样本")
+        print(f"内存占用: {self.used_memory / (1024 ** 3):.2f}GB")
+
+    def _sorted_indices(self):
+        """返回按文件大小排序的索引"""
+        sizes = [(os.path.getsize(p) if os.path.exists(p) else 0, i)
+                 for i, p in enumerate(self.slide_path_list)]
+        return [i for _, i in sorted(sizes, key=lambda x: x[0])]
+
+    def _load_item(self, idx):
+        """加载单个样本"""
+        try:
+            feat = torch.load(self.slide_path_list[idx])
+            label = torch.tensor(int(self.labels_list[idx]))
+            if feat.dim() == 3:
+                feat = feat.squeeze(0)
+            return (feat, label, Path(self.slide_path_list[idx]).stem)
+        except Exception as e:
+            return None
+
+    def __getitem__(self, idx):
+        if self.preloaded_data[idx] is not None:
+            return self.preloaded_data[idx]
+        return self._load_item(idx) or (torch.zeros(1), torch.tensor(-1), '')
 
     def __len__(self):
         return len(self.slide_path_list)
-
-    def __getitem__(self, idx):
-
-        slide_path = self.slide_path_list[idx]
-        label = int(self.labels_list[idx])
-        label = torch.tensor(label)
-        slide_id = os.path.splitext(os.path.basename(slide_path))[0]
-
-        # adapting to different feature file types(https://github.com/mahmoodlab/TRIDENT)
-        if slide_path.endswith('.h5'):
-            with h5py.File(slide_path, 'r') as h5_file:
-                feat = h5_file['features'][:]
-                feat = torch.from_numpy(feat)
-        else:
-            feat = torch.load(slide_path)
-            # Handle dictionary format (e.g., {'feats': tensor, 'coords': tensor})
-            if isinstance(feat, dict):
-                if 'feats' in feat:
-                    feat = feat['feats']
-                elif 'features' in feat:
-                    feat = feat['features']
-                else:
-                    raise ValueError(f"Unknown dict format in {slide_path}, keys: {list(feat.keys())}")
-        if len(feat.shape) == 3:
-            feat = feat.squeeze(0)
-        return feat, label, slide_id
 
     def is_None_Dataset(self):
         return (self.__len__() == 0)
 
     def is_with_labels(self):
         return (len(self.labels_list) != 0)
-
-    def get_balanced_sampler(self, replacement=True):
-        from collections import Counter
-        from torch.utils.data import WeightedRandomSampler
-
-        label_counts = Counter(self.labels_list)
-        weights = [1.0 / label_counts[label] for label in self.labels_list]
-        num_samples = len(self.labels_list)
-
-        sampler = WeightedRandomSampler(weights=weights, num_samples=num_samples, replacement=replacement)
-        return sampler
 
 
 class CDP_MIL_WSI_Dataset(WSI_Dataset):
@@ -95,83 +117,42 @@ class LONG_MIL_WSI_Dataset(WSI_Dataset):
         return h5_dict.get(slide_name, None)
 
 
-class SC_MIL_WSI_Dataset(WSI_Dataset):
-    """
-    Dataset for SC_MIL that can work without h5 files
-    If h5_csv_path is provided, uses coords from h5 files (like LONG_MIL)
-    If h5_csv_path is None, generates dummy coords based on patch indices
-    """
+class WSI_MM_Dataset(Dataset):
+    def __init__(self, dataset_info_csv_path, group):
+        assert group in ['train', 'val', 'test']
+        df = pd.read_csv(dataset_info_csv_path)
+        # 过滤并重置索引
+        self.data_df = df[[f'{group}_slide_path', f'{group}_label']].dropna().reset_index(drop=True)
+        self.slide_paths = self.data_df[f'{group}_slide_path'].to_list()
+        self.labels = self.data_df[f'{group}_label'].astype(int).to_list()
 
-    def __init__(self, dataset_info_csv_path, h5_csv_path=None, group='train', use_dummy_coords=True):
-        super(SC_MIL_WSI_Dataset, self).__init__(dataset_info_csv_path, group)
-        self.use_dummy_coords = use_dummy_coords
-
-        if h5_csv_path is not None and os.path.exists(h5_csv_path):
-            # Use h5 files if available
-            self.h5_path_list = pd.read_csv(h5_csv_path)['h5_path'].dropna().values
-            self.use_dummy_coords = False
-        else:
-            # Use dummy coords
-            self.h5_path_list = None
-            self.use_dummy_coords = True
-            if h5_csv_path is not None:
-                print(f"⚠️  Warning: h5_csv_path '{h5_csv_path}' not found. Using dummy coords for SC_MIL.")
-
-    def _generate_dummy_coords(self, num_patches):
-        """
-        Generate dummy coordinates based on patch indices
-        Assumes patches are arranged in a grid-like structure
-        """
-        # Estimate grid size (assume roughly square)
-        grid_size = int(np.ceil(np.sqrt(num_patches)))
-
-        # Generate 2D grid coordinates
-        coords = []
-        for i in range(num_patches):
-            row = i // grid_size
-            col = i % grid_size
-            coords.append([col, row])  # (x, y) format
-
-        return np.array(coords, dtype=np.float32)
+    def __len__(self):
+        return len(self.slide_paths)
 
     def __getitem__(self, idx):
-        slide_path = self.slide_path_list[idx]
-        slide_name = os.path.basename(slide_path).replace('.pt', '')
-        label = int(self.labels_list[idx])
-        label = torch.tensor(label)
+        he_path = self.slide_paths[idx]
+        modalities = ['HE', 'CD31', 'CD34', 'MASSON']
+        feat_list = []
 
-        # Load features
-        feat = torch.load(slide_path)
-        if len(feat.shape) == 3:
-            feat = feat.squeeze(0)  # (N, D)
+        for m in modalities:
+            # 动态生成路径并检查是否存在
+            m_path = Path(he_path.replace('/HE/', f'/{m}/'))
+            if m_path.exists():
+                f = torch.load(m_path)
+                # 统一形状为 (n, 1024)
+                if isinstance(f, torch.Tensor):
+                    f = f.squeeze()  # 去掉可能存在的 batch 维度
+                    if f.dim() == 1: f = f.unsqueeze(0)  # 确保是 2D
+                    feat_list.append(f)
 
-        num_patches = feat.shape[0]
+        combined_feat = torch.cat(feat_list, dim=0)
+        label = torch.tensor(self.labels[idx], dtype=torch.long)
 
-        # Get coords
-        if self.use_dummy_coords:
-            # Generate dummy coords
-            coords_np = self._generate_dummy_coords(num_patches)
-            coords = torch.from_numpy(coords_np)  # (N, 2)
-        else:
-            # Load from h5 file
-            h5_path = self._find_h5_path_by_slide_name(slide_name, self.h5_path_list)
-            if h5_path is None:
-                # Fallback to dummy coords if h5 not found
-                coords_np = self._generate_dummy_coords(num_patches)
-                coords = torch.from_numpy(coords_np)
-            else:
-                h5_file = h5py.File(h5_path, 'r')
-                coords = torch.from_numpy(np.array(h5_file['coords']))
-                h5_file.close()
-                if len(coords.shape) == 3:
-                    coords = coords.squeeze(0)  # (N, 2)
+        return combined_feat, label, Path(self.slide_paths[idx]).stem
 
-        # Concatenate features and coords
-        feat_with_coords = torch.cat([feat, coords], dim=-1)  # (N, D+2)
-        return feat_with_coords, label
+    def is_None_Dataset(self):
+        return (self.__len__() == 0)
 
-    def _find_h5_path_by_slide_name(self, slide_name, h5_paths_list):
-        if h5_paths_list is None:
-            return None
-        h5_dict = {os.path.basename(h5_path).replace('.h5', ''): h5_path for h5_path in h5_paths_list}
-        return h5_dict.get(slide_name, None)
+    def is_with_labels(self):
+        return (len(self.labels_list) != 0)
+

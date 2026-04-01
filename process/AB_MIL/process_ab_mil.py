@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 from modules.AB_MIL.ab_mil import AB_MIL
 from utils.process_utils import get_process_pipeline,get_act
+# from utils.wsi_utils import WSI_MM_Dataset as WSI_Dataset
 from utils.wsi_utils import WSI_Dataset
 from utils.general_utils import set_global_seed,init_epoch_info_log,add_epoch_info_log,early_stop
 from utils.model_utils import get_optimizer,get_scheduler,get_criterion,save_last_model,save_log,model_select
