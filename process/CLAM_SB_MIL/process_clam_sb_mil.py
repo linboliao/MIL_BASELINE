@@ -72,15 +72,15 @@ def process_CLAM_SB_MIL(args):
             now_scheduler = scheduler
         train_loss,cost_time = clam_train_loop(device,mil_model,train_dataloader,criterion,optimizer,now_scheduler,bag_weight)
         if process_pipeline == 'Train_Val_Test':
-            val_loss,val_metrics = clam_val_loop(device,num_classes,mil_model,val_dataloader,criterion,bag_weight)
-            test_loss,test_metrics = clam_val_loop(device,num_classes,mil_model,test_dataloader,criterion,bag_weight)
+            val_loss,val_metrics,_ = clam_val_loop(device,num_classes,mil_model,val_dataloader,criterion,bag_weight)
+            test_loss,test_metrics,_ = clam_val_loop(device,num_classes,mil_model,test_dataloader,criterion,bag_weight)
         elif process_pipeline == 'Train_Val':
-            val_loss,val_metrics = clam_val_loop(device,num_classes,mil_model,val_dataloader,criterion,bag_weight)
+            val_loss,val_metrics,_ = clam_val_loop(device,num_classes,mil_model,val_dataloader,criterion,bag_weight)
             test_loss,test_metrics = None,None
         elif process_pipeline == 'Train_Test':
             val_loss,val_metrics,test_loss,test_metrics = None,None,None,None
             if epoch+1 == args.General.num_epochs:
-                test_loss,test_metrics = clam_val_loop(device,num_classes,mil_model,test_dataloader,criterion,bag_weight)
+                test_loss,test_metrics,_ = clam_val_loop(device,num_classes,mil_model,test_dataloader,criterion,bag_weight)
 
 
         FAIL = '\033[91m'

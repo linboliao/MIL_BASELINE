@@ -68,15 +68,15 @@ def process_AMD_MIL(args):
             now_scheduler = scheduler
         train_loss,cost_time = train_loop(device,mil_model,train_dataloader,criterion,optimizer,now_scheduler)
         if process_pipeline == 'Train_Val_Test':
-            val_loss,val_metrics = val_loop(device,num_classes,mil_model,val_dataloader,criterion)
-            test_loss,test_metrics = val_loop(device,num_classes,mil_model,test_dataloader,criterion)
+            val_loss,val_metrics,_ = val_loop(device,num_classes,mil_model,val_dataloader,criterion)
+            test_loss,test_metrics,_ = val_loop(device,num_classes,mil_model,test_dataloader,criterion)
         elif process_pipeline == 'Train_Val':
-            val_loss,val_metrics = val_loop(device,num_classes,mil_model,val_dataloader,criterion)
+            val_loss,val_metrics,_ = val_loop(device,num_classes,mil_model,val_dataloader,criterion)
             test_loss,test_metrics = None,None
         elif process_pipeline == 'Train_Test':
             val_loss,val_metrics,test_loss,test_metrics = None,None,None,None
             if epoch+1 == args.General.num_epochs:
-                test_loss,test_metrics = val_loop(device,num_classes,mil_model,test_dataloader,criterion)
+                test_loss,test_metrics,_ = val_loop(device,num_classes,mil_model,test_dataloader,criterion)
 
 
         FAIL = '\033[91m'

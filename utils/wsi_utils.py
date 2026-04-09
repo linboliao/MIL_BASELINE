@@ -1,3 +1,5 @@
+import pandas as pd
+import math
 import os
 import numpy as np
 import pandas as pd
@@ -18,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
 
-class WSI_Dataset(torch.utils.data.Dataset):
+class WSI_Dataset1(torch.utils.data.Dataset):
     def __init__(self, dataset_info_csv_path, group, preload=True, num_workers=None, max_memory_gb=50):
         assert group in ['train', 'val', 'test']
 
@@ -84,6 +86,61 @@ class WSI_Dataset(torch.utils.data.Dataset):
         return (len(self.labels_list) != 0)
 
 
+class WSI_Dataset(Dataset):
+    def __init__(self, dataset_info_csv_path, group):
+        assert group in ['train', 'val', 'test'], 'group must be in [train,val,test]'
+        self.dataset_info_csv_path = dataset_info_csv_path
+        self.dataset_df = pd.read_csv(self.dataset_info_csv_path)
+        self.slide_path_list = self.dataset_df[group + '_slide_path'].dropna().to_list()
+        self.labels_list = self.dataset_df[group + '_label'].dropna().to_list()
+
+    def __len__(self):
+        return len(self.slide_path_list)
+
+    def __getitem__(self, idx):
+
+        slide_path = self.slide_path_list[idx]
+        label = int(self.labels_list[idx])
+        label = torch.tensor(label)
+        slide_id = os.path.splitext(os.path.basename(slide_path))[0]
+
+        # adapting to different feature file types(https://github.com/mahmoodlab/TRIDENT)
+        if slide_path.endswith('.h5'):
+            with h5py.File(slide_path, 'r') as h5_file:
+                feat = h5_file['features'][:]
+                feat = torch.from_numpy(feat)
+        else:
+            feat = torch.load(slide_path)
+            # Handle dictionary format (e.g., {'feats': tensor, 'coords': tensor})
+            if isinstance(feat, dict):
+                if 'feats' in feat:
+                    feat = feat['feats']
+                elif 'features' in feat:
+                    feat = feat['features']
+                else:
+                    raise ValueError(f"Unknown dict format in {slide_path}, keys: {list(feat.keys())}")
+        if len(feat.shape) == 3:
+            feat = feat.squeeze(0)
+        return feat, label, slide_id
+
+    def is_None_Dataset(self):
+        return (self.__len__() == 0)
+
+    def is_with_labels(self):
+        return (len(self.labels_list) != 0)
+
+    def get_balanced_sampler(self, replacement=True):
+        from collections import Counter
+        from torch.utils.data import WeightedRandomSampler
+
+        label_counts = Counter(self.labels_list)
+        weights = [1.0 / label_counts[label] for label in self.labels_list]
+        num_samples = len(self.labels_list)
+
+        sampler = WeightedRandomSampler(weights=weights, num_samples=num_samples, replacement=replacement)
+        return sampler
+
+
 class CDP_MIL_WSI_Dataset(WSI_Dataset):
     def __init__(self, dataset_info_csv_path, BeyesGuassian_pt_dir, group):
         super(CDP_MIL_WSI_Dataset, self).__init__(dataset_info_csv_path, group)
@@ -131,7 +188,7 @@ class WSI_MM_Dataset(Dataset):
 
     def __getitem__(self, idx):
         he_path = self.slide_paths[idx]
-        modalities = ['HE', 'CD31', 'CD34', 'MASSON']
+        modalities = ['HE', 'DHR/CD31', 'DHR/CD34', 'DHR/MASSON']
         feat_list = []
 
         for m in modalities:
