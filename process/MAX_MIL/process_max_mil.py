@@ -16,14 +16,19 @@ def process_MAX_MIL(args):
     process_pipeline = get_process_pipeline(val_dataset,test_dataset) 
     args.General.process_pipeline = process_pipeline
     '''
-    generator设置seed用于保证shuffle的一致性
+    Set seed for generator to ensure shuffle consistency
     '''
     
     generator = torch.Generator()
     generator.manual_seed(args.General.seed) 
     set_global_seed(args.General.seed)
     num_workers = args.General.num_workers
-    train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers = num_workers,generator=generator)
+    use_balanced_sampler = args.Dataset.balanced_sampler.use
+    if use_balanced_sampler:
+        sampler = train_dataset.get_balanced_sampler(replacement = args.Dataset.balanced_sampler.replacement)
+        train_dataloader = DataLoader(train_dataset, batch_size=1, num_workers = num_workers,generator=generator,sampler=sampler)
+    else:
+        train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers = num_workers,generator=generator)
     val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=num_workers)
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=num_workers)
     

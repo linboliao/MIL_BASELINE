@@ -30,6 +30,10 @@ class WarmUpLR(_LRScheduler):
 def get_criterion(criterion):
     if criterion == 'ce':
         return torch.nn.CrossEntropyLoss()
+    elif criterion == 'bce':
+        return torch.nn.BCEWithLogitsLoss()
+    else:
+        raise ValueError(f"Unknown criterion: {criterion}. Supported: 'ce', 'bce'")
 
 
 def get_optimizer(args,model):
@@ -140,6 +144,26 @@ def get_model_from_yaml(yaml_args):
         from modules.AB_MIL.ab_mil import AB_MIL
         mil_model = AB_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim)
         return mil_model
+    elif model_name == 'MIXUP_MIL':
+        from modules.MIXUP_MIL.mixup_mil import MIXUP_MIL
+        mil_model = MIXUP_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim)
+        return mil_model
+    elif model_name == 'INSMIX_MIL':
+        from modules.INSMIX_MIL.insmix_mil import INSMIX_MIL
+        mil_model = INSMIX_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim)
+        return mil_model
+    elif model_name == 'PSEBMIX_MIL':
+        from modules.PSEBMIX_MIL.psebmix_mil import PSEBMIX_MIL
+        mil_model = PSEBMIX_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim)
+        return mil_model
+    elif model_name == 'RANKMIX_MIL':
+        from modules.RANKMIX_MIL.rankmix_mil import RANKMIX_MIL
+        mil_model = RANKMIX_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim)
+        return mil_model
+    elif model_name == 'REMIX_MIL':
+        from modules.REMIX_MIL.remix_mil import REMIX_MIL
+        mil_model = REMIX_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim)
+        return mil_model
     elif model_name == 'GATE_AB_MIL':
         from modules.GATE_AB_MIL.gate_ab_mil import GATE_AB_MIL
         mil_model = GATE_AB_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,get_act(yaml_args.Model.act),yaml_args.Model.dropout,yaml_args.Model.bias,yaml_args.Model.in_dim)
@@ -218,6 +242,444 @@ def get_model_from_yaml(yaml_args):
         dimReduction = DimReduction(yaml_args.Model.in_dim, yaml_args.Model.mdim, numLayer_Res=yaml_args.Model.numLayer_Res)
         attCls = Attention_with_Classifier(L=yaml_args.Model.mdim, num_cls=yaml_args.General.num_classes, droprate=yaml_args.Model.attCls_dropout)
         return (classifier,attention,dimReduction,attCls)
+    elif model_name == 'DyHG_MIL':
+        from modules.DyHG_MIL.dyhg_mil import DyHG_MIL
+        mil_model = DyHG_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            emb_dim=yaml_args.Model.emb_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            hyper_num=yaml_args.Model.hyper_num,
+            num_layers=yaml_args.Model.num_layers,
+            tau=yaml_args.Model.tau,
+            act=get_act(yaml_args.Model.act)
+        )
+        return mil_model
+    elif model_name == 'DG_MIL':
+        from modules.DG_MIL.dg_mil import DG_MIL
+        projection_dim = yaml_args.Model.projection_dim if hasattr(yaml_args.Model, 'projection_dim') else 768
+        mil_model = DG_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            projection_dim=projection_dim
+        )
+        return mil_model
+    elif model_name == 'DT_MIL':
+        from modules.DT_MIL.dt_mil import DT_MIL
+        mil_model = DT_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act)
+        )
+        return mil_model
+    elif model_name == 'Mamba_MIL':
+        from modules.Mamba_MIL.mamba_mil import Mamba_MIL
+        layer = yaml_args.Model.layer if hasattr(yaml_args.Model, 'layer') else 2
+        rate = yaml_args.Model.rate if hasattr(yaml_args.Model, 'rate') else 10
+        mamba_type = yaml_args.Model.mamba_type if hasattr(yaml_args.Model, 'mamba_type') else 'SRMamba'
+        mil_model = Mamba_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            layer=layer,
+            rate=rate,
+            mamba_type=mamba_type
+        )
+        return mil_model
+    elif model_name == 'MHIM_MIL':
+        from modules.MHIM_MIL.mhim_mil import MHIM_MIL
+        mil_model = MHIM_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act)
+        )
+        return mil_model
+    elif model_name == 'Micro_MIL':
+        from modules.Micro_MIL.micro_mil import Micro_MIL
+        cluster_number = yaml_args.Model.cluster_number if hasattr(yaml_args.Model, 'cluster_number') else 36
+        hidden_dim = yaml_args.Model.hidden_dim if hasattr(yaml_args.Model, 'hidden_dim') else 128
+        layer = yaml_args.Model.layer if hasattr(yaml_args.Model, 'layer') else 2
+        alpha = yaml_args.Model.alpha if hasattr(yaml_args.Model, 'alpha') else 1.0
+        shuffle = yaml_args.Model.shuffle if hasattr(yaml_args.Model, 'shuffle') else False
+        mil_model = Micro_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            cluster_number=cluster_number,
+            hidden_dim=hidden_dim,
+            layer=layer,
+            alpha=alpha,
+            shuffle=shuffle
+        )
+        return mil_model
+    elif model_name == 'MSM_MIL':
+        from modules.MSM_MIL.msm_mil import MSM_MIL
+        layer = yaml_args.Model.layer if hasattr(yaml_args.Model, 'layer') else 2
+        rate = yaml_args.Model.rate if hasattr(yaml_args.Model, 'rate') else 10
+        mamba_type = yaml_args.Model.mamba_type if hasattr(yaml_args.Model, 'mamba_type') else 'SRMamba'
+        mil_model = MSM_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            layer=layer,
+            rate=rate,
+            mamba_type=mamba_type
+        )
+        return mil_model
+    elif model_name == 'MSMMIL_MIL':
+        from modules.MSMMIL_MIL.msmmil_mil import MSMMIL_MIL
+        layer = yaml_args.Model.layer if hasattr(yaml_args.Model, 'layer') else 2
+        rate = yaml_args.Model.rate if hasattr(yaml_args.Model, 'rate') else 10
+        mamba_type = yaml_args.Model.mamba_type if hasattr(yaml_args.Model, 'mamba_type') else 'SRMamba'
+        mil_model = MSMMIL_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            layer=layer,
+            rate=rate,
+            mamba_type=mamba_type
+        )
+        return mil_model
+    elif model_name == 'PA_MIL':
+        from modules.PA_MIL.pa_mil import PA_MIL
+        embed_dim = yaml_args.Model.embed_dim if hasattr(yaml_args.Model, 'embed_dim') else 512
+        num_layers = yaml_args.Model.num_layers if hasattr(yaml_args.Model, 'num_layers') else 2
+        num_heads = yaml_args.Model.num_heads if hasattr(yaml_args.Model, 'num_heads') else 8
+        dim_head = yaml_args.Model.dim_head if hasattr(yaml_args.Model, 'dim_head') else 64
+        mil_model = PA_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            embed_dim=embed_dim,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dim_head=dim_head
+        )
+        return mil_model
+    elif model_name == 'DT_MIL':
+        from modules.DT_MIL.dt_mil import DT_MIL
+        d_model = yaml_args.Model.d_model if hasattr(yaml_args.Model, 'd_model') else 512
+        n_heads = yaml_args.Model.n_heads if hasattr(yaml_args.Model, 'n_heads') else 8
+        num_encoder_layers = yaml_args.Model.num_encoder_layers if hasattr(yaml_args.Model, 'num_encoder_layers') else 2
+        dim_feedforward = yaml_args.Model.dim_feedforward if hasattr(yaml_args.Model, 'dim_feedforward') else 2048
+        num_queries = yaml_args.Model.num_queries if hasattr(yaml_args.Model, 'num_queries') else 10
+        mil_model = DT_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            d_model=d_model,
+            n_heads=n_heads,
+            num_encoder_layers=num_encoder_layers,
+            dim_feedforward=dim_feedforward,
+            num_queries=num_queries
+        )
+        return mil_model
+    elif model_name == 'CA_MIL':
+        from modules.CA_MIL.ca_mil import CA_MIL
+        L = yaml_args.Model.L if hasattr(yaml_args.Model, 'L') else 512
+        D = yaml_args.Model.D if hasattr(yaml_args.Model, 'D') else 128
+        mil_model = CA_MIL(
+            L=L,
+            D=D,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            in_dim=yaml_args.Model.in_dim
+        )
+        return mil_model
+    elif model_name == 'ADD_MIL':
+        from modules.ADD_MIL.add_mil import ADD_MIL
+        L = yaml_args.Model.L if hasattr(yaml_args.Model, 'L') else 512
+        D = yaml_args.Model.D if hasattr(yaml_args.Model, 'D') else 128
+        mil_model = ADD_MIL(
+            L=L,
+            D=D,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            in_dim=yaml_args.Model.in_dim
+        )
+        return mil_model
+    elif model_name == 'MHIM_MIL':
+        from modules.MHIM_MIL.mhim_mil import MHIM_MIL
+        mlp_dim = yaml_args.Model.mlp_dim if hasattr(yaml_args.Model, 'mlp_dim') else 512
+        head = yaml_args.Model.head if hasattr(yaml_args.Model, 'head') else 8
+        mask_ratio = yaml_args.Model.mask_ratio if hasattr(yaml_args.Model, 'mask_ratio') else 0.0
+        baseline = yaml_args.Model.baseline if hasattr(yaml_args.Model, 'baseline') else 'selfattn'
+        mil_model = MHIM_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            mlp_dim=mlp_dim,
+            head=head,
+            mask_ratio=mask_ratio,
+            baseline=baseline
+        )
+        return mil_model
+    elif model_name == 'IB_MIL':
+        from modules.IB_MIL.ib_mil import IB_MIL
+        L = yaml_args.Model.L if hasattr(yaml_args.Model, 'L') else 512
+        D = yaml_args.Model.D if hasattr(yaml_args.Model, 'D') else 128
+        beta = yaml_args.Model.beta if hasattr(yaml_args.Model, 'beta') else 0.1
+        mil_model = IB_MIL(
+            L=L,
+            D=D,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            in_dim=yaml_args.Model.in_dim,
+            beta=beta
+        )
+        return mil_model
+    elif model_name == 'RRT_MIL':
+        from modules.RRT_MIL.rrt_mil import RRT_MIL
+        L = yaml_args.Model.L if hasattr(yaml_args.Model, 'L') else 512
+        D = yaml_args.Model.D if hasattr(yaml_args.Model, 'D') else 128
+        mil_model = RRT_MIL(
+            L=L,
+            D=D,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            in_dim=yaml_args.Model.in_dim
+        )
+        return mil_model
+    elif model_name == 'S4_MIL':
+        from modules.S4_MIL.s4_mil import S4_MIL
+        d_model = yaml_args.Model.d_model if hasattr(yaml_args.Model, 'd_model') else 512
+        d_state = yaml_args.Model.d_state if hasattr(yaml_args.Model, 'd_state') else 32
+        n_layers = yaml_args.Model.n_layers if hasattr(yaml_args.Model, 'n_layers') else 1
+        mil_model = S4_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            d_model=d_model,
+            d_state=d_state,
+            n_layers=n_layers
+        )
+        return mil_model
+    elif model_name == 'PGCN_MIL':
+        from modules.PGCN_MIL.pgcn_mil import PGCN_MIL
+        hidden_dim = yaml_args.Model.hidden_dim if hasattr(yaml_args.Model, 'hidden_dim') else 256
+        n_layers = yaml_args.Model.n_layers if hasattr(yaml_args.Model, 'n_layers') else 2
+        k = yaml_args.Model.k if hasattr(yaml_args.Model, 'k') else 5
+        use_dgl = yaml_args.Model.use_dgl if hasattr(yaml_args.Model, 'use_dgl') else False
+        mil_model = PGCN_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            hidden_dim=hidden_dim,
+            n_layers=n_layers,
+            k=k,
+            use_dgl=use_dgl
+        )
+        return mil_model
+    elif model_name == 'NCIE_MIL':
+        from modules.NCIE_MIL.nc_ie_mil import NcIEMIL
+        in_dim = yaml_args.Model.in_dim
+        in_chans = yaml_args.Model.in_chans if hasattr(yaml_args.Model, 'in_chans') else 256
+        latent_dim = yaml_args.Model.latent_dim if hasattr(yaml_args.Model, 'latent_dim') else 1024
+        num_heads = yaml_args.Model.num_heads if hasattr(yaml_args.Model, 'num_heads') else 4
+        ratio = yaml_args.Model.ratio if hasattr(yaml_args.Model, 'ratio') else 32
+        qkv_bias = yaml_args.Model.qkv_bias if hasattr(yaml_args.Model, 'qkv_bias') else False
+        qk_scale = yaml_args.Model.qk_scale if hasattr(yaml_args.Model, 'qk_scale') else None
+        attn_drop = yaml_args.Model.attn_drop if hasattr(yaml_args.Model, 'attn_drop') else 0.0
+        proj_drop = yaml_args.Model.proj_drop if hasattr(yaml_args.Model, 'proj_drop') else 0.0
+        conv_drop = yaml_args.Model.conv_drop if hasattr(yaml_args.Model, 'conv_drop') else 0.0
+        mode = yaml_args.Model.mode if hasattr(yaml_args.Model, 'mode') else 'cross'
+        mil_model = NcIEMIL(
+            in_dim=in_dim,
+            in_chans=in_chans,
+            latent_dim=latent_dim,
+            n_classes=yaml_args.General.num_classes,
+            num_heads=num_heads,
+            ratio=ratio,
+            qkv_bias=qkv_bias,
+            qk_scale=qk_scale,
+            attn_drop=attn_drop,
+            proj_drop=proj_drop,
+            conv_drop=conv_drop,
+            mode=mode
+        )
+        return mil_model
+    elif model_name == 'MAMBA2D_MIL':
+        import importlib
+        mamba2d_module = importlib.import_module('modules.MAMBA2D_MIL.mamba2d_mil')
+        Mamba2D_MIL = mamba2d_module.Mamba2D_MIL
+        d_model = yaml_args.Model.d_model if hasattr(yaml_args.Model, 'd_model') else 512
+        d_state = yaml_args.Model.d_state if hasattr(yaml_args.Model, 'd_state') else 16
+        n_layers = yaml_args.Model.n_layers if hasattr(yaml_args.Model, 'n_layers') else 2
+        grid_size = yaml_args.Model.grid_size if hasattr(yaml_args.Model, 'grid_size') else None
+        mil_model = Mamba2D_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            d_model=d_model,
+            d_state=d_state,
+            n_layers=n_layers,
+            grid_size=grid_size
+        )
+        return mil_model
+    elif model_name == 'GDF_MIL':
+        from modules.GDF_MIL.gdf_mil import GDF_MIL
+        in_dim = yaml_args.Model.in_dim
+        hid_dim = yaml_args.Model.hid_dim if hasattr(yaml_args.Model, 'hid_dim') else 256
+        out_dim = yaml_args.Model.out_dim if hasattr(yaml_args.Model, 'out_dim') else 128
+        k_components = yaml_args.Model.k_components if hasattr(yaml_args.Model, 'k_components') else 10
+        k_neighbors = yaml_args.Model.k_neighbors if hasattr(yaml_args.Model, 'k_neighbors') else 10
+        dropout = yaml_args.Model.dropout if hasattr(yaml_args.Model, 'dropout') else 0.1
+        lambda_smooth = yaml_args.Model.lambda_smooth if hasattr(yaml_args.Model, 'lambda_smooth') else 0.0
+        lambda_nce = yaml_args.Model.lambda_nce if hasattr(yaml_args.Model, 'lambda_nce') else 0.0
+        act = yaml_args.Model.act if hasattr(yaml_args.Model, 'act') else 'leaky_relu'
+        mil_model = GDF_MIL(
+            in_dim=in_dim,
+            num_classes=yaml_args.General.num_classes,
+            hid_dim=hid_dim,
+            out_dim=out_dim,
+            k_components=k_components,
+            k_neighbors=k_neighbors,
+            dropout=dropout,
+            lambda_smooth=lambda_smooth,
+            lambda_nce=lambda_nce,
+            act=act
+        )
+        return mil_model
+    elif model_name == 'SC_MIL':
+        from modules.SC_MIL.sc_mil import SC_MIL
+        hidden_size = yaml_args.Model.hidden_size if hasattr(yaml_args.Model, 'hidden_size') else yaml_args.Model.in_dim
+        deep = yaml_args.Model.deep if hasattr(yaml_args.Model, 'deep') else 1
+        n_cluster = yaml_args.Model.n_cluster if hasattr(yaml_args.Model, 'n_cluster') else None
+        cluster_size = yaml_args.Model.cluster_size if hasattr(yaml_args.Model, 'cluster_size') else None
+        feature_weight = yaml_args.Model.feature_weight if hasattr(yaml_args.Model, 'feature_weight') else 0
+        with_softfilter = yaml_args.Model.with_softfilter if hasattr(yaml_args.Model, 'with_softfilter') else False
+        use_filter_branch = yaml_args.Model.use_filter_branch if hasattr(yaml_args.Model, 'use_filter_branch') else False
+        with_cssa = yaml_args.Model.with_cssa if hasattr(yaml_args.Model, 'with_cssa') else True
+        mil_model = SC_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            hidden_size=hidden_size,
+            deep=deep,
+            n_cluster=n_cluster,
+            cluster_size=cluster_size,
+            feature_weight=feature_weight,
+            dropout=yaml_args.Model.dropout,
+            with_softfilter=with_softfilter,
+            use_filter_branch=use_filter_branch,
+            with_cssa=with_cssa,
+            act=get_act(yaml_args.Model.act)
+        )
+        return mil_model
+    elif model_name == 'IIB_MIL':
+        from modules.IIB_MIL.iib_mil import IIB_MIL
+        dim = yaml_args.Model.dim if hasattr(yaml_args.Model, 'dim') else 256
+        depth = yaml_args.Model.depth if hasattr(yaml_args.Model, 'depth') else 3
+        num_queries = yaml_args.Model.num_queries if hasattr(yaml_args.Model, 'num_queries') else 5
+        mil_model = IIB_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            num_classes=yaml_args.General.num_classes,
+            dim=dim,
+            depth=depth,
+            num_queries=num_queries,
+            dropout=yaml_args.Model.dropout
+        )
+        return mil_model
+    elif model_name == 'AEM_MIL':
+        from modules.AEM_MIL.aem_mil import AEM_MIL
+        L = yaml_args.Model.L if hasattr(yaml_args.Model, 'L') else 512
+        D = yaml_args.Model.D if hasattr(yaml_args.Model, 'D') else 128
+        temperature = yaml_args.Model.temperature if hasattr(yaml_args.Model, 'temperature') else 1.0
+        lambda_entropy = yaml_args.Model.lambda_entropy if hasattr(yaml_args.Model, 'lambda_entropy') else 0.1
+        mil_model = AEM_MIL(
+            L=L,
+            D=D,
+            num_classes=yaml_args.General.num_classes,
+            dropout=yaml_args.Model.dropout,
+            act=get_act(yaml_args.Model.act),
+            in_dim=yaml_args.Model.in_dim,
+            temperature=temperature,
+            lambda_entropy=lambda_entropy
+        )
+        return mil_model
+    elif model_name == 'MICO_MIL':
+        from modules.MICO_MIL.mico_mil import MICO_MIL
+        embedding_dim = yaml_args.Model.embedding_dim if hasattr(yaml_args.Model, 'embedding_dim') else 512
+        num_clusters = yaml_args.Model.num_clusters if hasattr(yaml_args.Model, 'num_clusters') else 64
+        num_enhancers = yaml_args.Model.num_enhancers if hasattr(yaml_args.Model, 'num_enhancers') else 3
+        hard = yaml_args.Model.hard if hasattr(yaml_args.Model, 'hard') else False
+        similarity_method = yaml_args.Model.similarity_method if hasattr(yaml_args.Model, 'similarity_method') else 'l2'
+        cluster_init_path = yaml_args.Model.cluster_init_path if hasattr(yaml_args.Model, 'cluster_init_path') else None
+        mil_model = MICO_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            embedding_dim=embedding_dim,
+            num_clusters=num_clusters,
+            num_classes=yaml_args.General.num_classes,
+            num_enhancers=num_enhancers,
+            drop=yaml_args.Model.dropout,
+            hard=hard,
+            similarity_method=similarity_method,
+            cluster_init_path=cluster_init_path
+        )
+        return mil_model
+    elif model_name == 'TDA_MIL' or model_name == 'tda_mil':
+        from modules.TDA_MIL.tda_mil import TDA_MIL
+        embed_dim = yaml_args.Model.embed_dim if hasattr(yaml_args.Model, 'embed_dim') else 512
+        num_layers = yaml_args.Model.num_layers if hasattr(yaml_args.Model, 'num_layers') else 2
+        num_heads = yaml_args.Model.num_heads if hasattr(yaml_args.Model, 'num_heads') else 8
+        mlp_ratio = yaml_args.Model.mlp_ratio if hasattr(yaml_args.Model, 'mlp_ratio') else 4.0
+        dropout = yaml_args.Model.dropout if hasattr(yaml_args.Model, 'dropout') else 0.1
+        attn_dropout = yaml_args.Model.attn_dropout if hasattr(yaml_args.Model, 'attn_dropout') else 0.1
+        td_mlp_ratio = yaml_args.Model.td_mlp_ratio if hasattr(yaml_args.Model, 'td_mlp_ratio') else 2.0
+        clamp_min = yaml_args.Model.clamp_min if hasattr(yaml_args.Model, 'clamp_min') else 0.0
+        clamp_max = yaml_args.Model.clamp_max if hasattr(yaml_args.Model, 'clamp_max') else 1.0
+        force_cls_score = yaml_args.Model.force_cls_score if hasattr(yaml_args.Model, 'force_cls_score') else 1.0
+        share_weights_step12 = yaml_args.Model.share_weights_step12 if hasattr(yaml_args.Model, 'share_weights_step12') else True
+        max_seq_len = yaml_args.Model.max_seq_len if hasattr(yaml_args.Model, 'max_seq_len') else 2048
+        mil_model = TDA_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            embed_dim=embed_dim,
+            num_classes=yaml_args.General.num_classes,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            mlp_ratio=mlp_ratio,
+            dropout=dropout,
+            attn_dropout=attn_dropout,
+            td_mlp_ratio=td_mlp_ratio,
+            clamp_min=clamp_min,
+            clamp_max=clamp_max,
+            force_cls_score=force_cls_score,
+            share_weights_step12=share_weights_step12,
+            max_seq_len=max_seq_len
+        )
+        return mil_model
+    elif model_name == 'RET_MIL':
+        from modules.RET_MIL.ret_mil import RET_MIL
+        embed_dim = yaml_args.Model.embed_dim if hasattr(yaml_args.Model, 'embed_dim') and yaml_args.Model.embed_dim is not None else yaml_args.Model.in_dim
+        chunk_len = yaml_args.Model.chunk_len if hasattr(yaml_args.Model, 'chunk_len') else 512
+        num_heads = yaml_args.Model.num_heads if hasattr(yaml_args.Model, 'num_heads') else 8
+        dropout = yaml_args.Model.dropout if hasattr(yaml_args.Model, 'dropout') else 0.25
+        mil_model = RET_MIL(
+            in_dim=yaml_args.Model.in_dim,
+            embed_dim=embed_dim,
+            num_classes=yaml_args.General.num_classes,
+            chunk_len=chunk_len,
+            num_heads=num_heads,
+            dropout=dropout
+        )
+        return mil_model
     else:
         raise ValueError(f'Invalid model name: {model_name}')
     

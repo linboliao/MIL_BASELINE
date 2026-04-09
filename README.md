@@ -11,6 +11,13 @@ With the rapid advancement of computational power and artificial intelligence te
 
 <details>
 <summary>News of MIL-Baseline</summary>
+  
+**Update Preview**
+1.Comprehensive update of feature extraction and heatmap visualization system (integrated with Trident)
+2.Comprehensive update for survival analysis adaptation
+
+**2025-11-08**
+Adapt the H5 format feature file for Trident (https://github.com/mahmoodlab/TRIDENT) and add the balanced_sampler plugin.
 
 **2025-1-10**
 fix bug of MIL_BASELINE, update visualization tools, add new MIL methods, add new dataset split methods
@@ -37,6 +44,22 @@ fix bug of test_mil.py
 **2024-07-20**
 fix bug of all MIL-models expect DTFD-MIL
 </details>
+
+---
+This project was originally developed for our previous work and is continuously maintained to be more user-friendly and support more approaches for histopathology WSI analysis.  
+**If you find this codebase helpful in your research, please consider citing:**
+
+```bibtex
+@inproceedings{ling2024agent,
+  title        = {Agent Aggregator with Mask Denoise Mechanism for Histopathology Whole Slide Image Analysis},
+  author       = {Ling, Xitong and Ouyang, Minxi and Wang, Yizhi and Chen, Xinrui and Yan, Renao and Chu, Hongbo
+                  and Cheng, Junru and Guan, Tian and Tian, Sufang and Liu, Xiaoping and others},
+  booktitle    = {Proceedings of the 32nd ACM International Conference on Multimedia},
+  pages        = {2795--2803},
+  year         = {2024}
+}
+```
+    		
   
 ## :memo: **Overall Introduction**
 ### :bookmark: Library Introduction
@@ -65,30 +88,59 @@ fix bug of all MIL-models expect DTFD-MIL
 * PLIP [A visual–language foundation model for pathology image analysis using medical Twitter](https://www.nature.com/articles/s41591-023-02504-3) (NAT MED 2023)
 * CONCH [A visual-language foundation model for computational pathology](https://www.nature.com/articles/s41591-024-02856-4) (NAT MED 2024)
 * UNI [Towards a general-purpose foundation model for computational pathology](https://www.nature.com/articles/s41591-024-02857-3) (NAT MED 2024)
+* UNI-V2 [Towards a general-purpose foundation model for computational pathology](https://www.nature.com/articles/s41591-024-02857-3) (NAT MED 2024)
 * GIGAPATH [A whole-slide foundation model for digital pathology from real-world data](https://www.nature.com/articles/s41586-024-07441-w) (NAT 2024)
-* VIRCHOW [A foundation model for clinical-grade computational pathology and rare cancers detection](https://www.nature.com/articles/s41591-024-03141-0) (NAT 2024)
-* VIRCHOW-V2 [Virchow2: Scaling Self-Supervised Mixed Magnification Models in Pathology](https://arxiv.org/pdf/2408.00738) (arxiv 2024)
-* CONCH-V1.5 [Multimodal Whole Slide Foundation Model for Pathology](https://arxiv.org/abs/2411.19666) (arxiv 2024)
+* VIRCHOW [A foundation model for clinical-grade computational pathology and rare cancers](https://www.nature.com/articles/s41591-024-03141-0) (NAT 2024)
+* VIRCHOW-V2 [Virchow2: Scaling Self-Supervised Mixed Magnification Models in Pathology](https://arxiv.org/pdf/2408.00738) (ARXIV 2024)
+* CONCH-V1.5 [Multimodal Whole Slide Foundation Model for Pathology](https://arxiv.org/abs/2411.19666) (NAT MED 2025)
+* HOPTIMUS-V0 [HOPTIMUS-V0](https://huggingface.co/bioptimus/H-optimus-0) 
+* HOPTIMUS-V1 [HOPTIMUS-V1](https://huggingface.co/bioptimus/H-optimus-1) 
+* MIDNIGHT [MIDNIGHT](https://huggingface.co/kaiko-ai/midnight) 
 * UPDATING...
 
 ###  :gem: Implementated NetWork
 * MEAN_MIL
 * MAX_MIL
 * AB_MIL [Attention-based Deep Multiple Instance Learning](https://arxiv.org/abs/1802.04712) (ICML 2018)
+* MIXUP_MIL [mixup: Beyond Empirical Risk Minimization](https://arxiv.org/abs/1710.09412) (ICLR 2018)
+* DT_MIL [Deformable Transformer for Multi-instance Learning on Histopathological Image](https://link.springer.com/chapter/10.1007/978-3-030-87237-3_20) (MICCAI 2021)
 * TRANS_MIL [Transformer based Correlated Multiple Instance Learning for WSI Classification](https://arxiv.org/abs/2106.00908) (NeurIPS 2021)
 * DS_MIL [Dual-stream MIL Network for WSI Classification with Self-supervised Contrastive Learning](https://arxiv.org/abs/2011.08939) (CVPR 2021)
 * CLAM_MIL [Data Efficient and Weakly Supervised Computational Pathology on WSI](https://arxiv.org/abs/2004.09666) (NAT BIOMED ENG 2021)
+* PGCN_MIL [Context-Aware Survival Prediction using Patch-based Graph Convolutional Networks](https://github.com/mahmoodlab/Patch-GCN) (MICCAI 2021)
+* REMIX_MIL [A General and Efficient Framework for MIL based WSI Classification](https://arxiv.org/abs/2110.09632) (MICCAI 2022)
+* S4_MIL [Efficiently Modeling Long Sequences with Structured State Spaces](https://github.com/isyangshu/MambaMIL) (ICLR 2022)
+* DG_MIL [Distribution Guided Multiple Instance Learning for Whole Slide Image Classification](https://arxiv.org/abs/2206.08861) (MICCAI 2022)
 * DTFD_MIL [Double-Tier Feature Distillation MIL for Histopathology WSI Classification](https://arxiv.org/abs/2203.12081) (CVPR 2022)
 * ADD_MIL [Additive MIL: Intrinsically Interpretable MIL for Pathology](https://arxiv.org/pdf/2206.01794) (NeurIPS 2022)
 * ILRA_MIL [Exploring Low-rank Property in MIL for Whole Slide Image classification](https://openreview.net/pdf?id=01KmhBsEPFO) (ICLR 2023)
+* IIB_MIL [Integrated instance-level and bag-level MIL with label disambiguation](https://link.springer.com/chapter/10.1007/978-3-031-43987-2_54) (MICCAI 2023)
+* IB_MIL [Interventional Bag Multi-Instance Learning On Whole-Slide Pathological Images](https://github.com/HHHedo/IBMIL) (CVPR 2023)
+* RANKMIX_MIL [Data Augmentation for Classifying WSIs with Diverse Sizes](https://openaccess.thecvf.com/content/CVPR2023/html/Chen_RankMix_Data_Augmentation_for_Weakly_Supervised_Learning_of_Classifying_Whole_CVPR_2023_paper.html) (CVPR 2023)
+* MHIM_MIL [MIL Framework with Masked Hard Instance Mining for WSI Classification](https://arxiv.org/abs/2307.15254) (ICCV 2023)
 * WIKG_MIL [Dynamic Graph Representation with Knowledge-aware Attention for WSI Analysis](https://arxiv.org/abs/2403.07719) (CVPR 2024)
 * AMD_MIL [Agent Aggregator with Mask Denoise Mechanism for Histopathology WSI Analysis](https://dl.acm.org/doi/10.1145/3664647.3681425) (MM 2024)
-* FR-MIL [Distribution Re-calibration based MIL with Transformer for WSI Classification](https://ieeexplore.ieee.org/abstract/document/10640165) (TMI 2024)
+* FR_MIL [Distribution Re-calibration based MIL with Transformer for WSI Classification](https://ieeexplore.ieee.org/abstract/document/10640165) (TMI 2024)
+* PSEBMIX_MIL [Pseudo-Bag Mixup Augmentation for MIL Based Whole Slide Image Classification](https://ieeexplore.ieee.org/abstract/document/10385148) (TMI 2024)
 * LONG_MIL [Scaling Long Contextual MIL for Histopathology WSI Analysis](https://arxiv.org/abs/2311.12885) (NeurIPS 2024) 
 * DGR_MIL [Exploring Diverse Global Representation in MIL for WSI Classification](https://arxiv.org/abs/2407.03575) (ECCV 2024) 
 * CDP_MIL [cDP-MIL: Robust Multiple Instance Learning via Cascaded Dirichlet Process](https://arxiv.org/abs/2407.11448) (ECCV 2024)
 * CA_MIL [Context-Aware Multiple Instance Learning for WSI Classification](https://arxiv.org/pdf/2305.05314) (ICLR 2024)
 * AC_MIL [Attention-Challenging Multiple Instance Learning for WSI Classification](https://arxiv.org/pdf/2311.07125) (ECCV 2024)
+* MAMBA_MIL [Enhancing Long Sequence Modeling with Sequence Reordering in CPath](https://arxiv.org/abs/2403.06800) (MICCAI 2024)
+* RET_MIL [Retentive Multiple Instance Learning for Histopathological WSI Classification](https://link.springer.com/chapter/10.1007/978-3-031-72083-3_41) (MICCAI 2024)
+* SC_MIL [Sparse Context-aware MIL for Predicting Cancer Survival Probability Distribution in WSI](https://arxiv.org/abs/2407.00664) (MICCAI 2024)
+* NCIE_MIL [Rethinking Decoupled MIL Framework for Histopathological Slide Classification](https://openreview.net/pdf?id=1GxyidfQzc) (MIDL 2024)
+* RRT_MIL [Towards Foundation Model-Level Performance in Computational Pathology](https://github.com/DearCaat/RRT-MIL) (CVPR 2024)
+* PA_MIL [Dynamic Policy-Driven Adaptive Multi-Instance Learning for WSI Classification](https://ieeexplore.ieee.org/document/10656273) (CVPR 2024)
+* MICRO_MIL [Graph-Based MIL for Context-Aware Diagnosis with Microscopic Images](https://arxiv.org/abs/2407.21604) (MICCAI 2025)
+* DYHG_MIL [Dynamic Hypergraph Representation for Bone Metastasis Cancer Analysis](https://arxiv.org/abs/2501.16787) (CMPB 2025)
+* MSM_MIL [Multi-scan Mamba-based Multiple Instance Learning for WSI classification](https://www.sciencedirect.com/science/article/abs/pii/S0950705125009177) (KBS 2025)
+* MAMBA2D_MIL [2DMamba: Efficient State Space Model for Image Representation](https://github.com/AtlasAnalyticsLab/2DMamba) (CVPR 2025)
+* AEM_MIL [Attention Entropy Maximization for MIL based WSI Classification](https://arxiv.org/abs/2406.15303) (MICCAI 2025)
+* MICO_MIL [Multiple Instance Learning with Context-Aware Clustering](https://arxiv.org/abs/2506.18028) (MICCAI 2025)
+* TDA_MIL [Top-Down Attention-based Multiple Instance Learning for Whole Slide Image Analysis](https://link.springer.com/chapter/10.1007/978-3-032-04927-8_62) (MICCAI 2025)
+* GDF_MIL [Rethinking Multi-Instance Learning through Graph-Driven Fusion]() (AAAI 2026)
 * UPDATING...
 
 ### ☑️  Implementated Metrics
