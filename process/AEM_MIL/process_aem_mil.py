@@ -83,7 +83,7 @@ def process_AEM_MIL(args):
         train_loss_total = 0.0
         train_count = 0
         mil_model.train()
-        for batch_idx, (data, label) in enumerate(train_dataloader):
+        for batch_idx, (data, label, slide_id) in enumerate(train_dataloader):
             data = data.to(device)
             label = label.to(device)
             
@@ -105,15 +105,15 @@ def process_AEM_MIL(args):
         train_loss = train_loss_total / train_count if train_count > 0 else 0.0
         
         if process_pipeline == 'Train_Val_Test':
-            val_loss, val_metrics = val_loop(device, num_classes, mil_model, val_dataloader, criterion)
-            test_loss, test_metrics = val_loop(device, num_classes, mil_model, test_dataloader, criterion)
+            val_loss, val_metrics, _ = val_loop(device, num_classes, mil_model, val_dataloader, criterion)
+            test_loss, test_metrics, _ = val_loop(device, num_classes, mil_model, test_dataloader, criterion)
         elif process_pipeline == 'Train_Val':
-            val_loss, val_metrics = val_loop(device, num_classes, mil_model, val_dataloader, criterion)
+            val_loss, val_metrics, _ = val_loop(device, num_classes, mil_model, val_dataloader, criterion)
             test_loss, test_metrics = None, None
         elif process_pipeline == 'Train_Test':
             val_loss, val_metrics, test_loss, test_metrics = None, None, None, None
             if epoch + 1 == args.General.num_epochs:
-                test_loss, test_metrics = val_loop(device, num_classes, mil_model, test_dataloader, criterion)
+                test_loss, test_metrics, _ = val_loop(device, num_classes, mil_model, test_dataloader, criterion)
         
         FAIL = '\033[91m'
         ENDC = '\033[0m'

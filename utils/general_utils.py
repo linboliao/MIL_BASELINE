@@ -121,6 +121,8 @@ def merge_k_fold_logs(k_fold_log_dir,process_pipeline):
                         'quadratic_kappa':[],'linear_kappa':[]}
     for fold_dir in fold_dirs:
         fold_log_dir = os.path.join(k_fold_log_dir,fold_dir)
+        if not os.path.isdir(fold_log_dir):
+            continue
         best_log_csv_path = glob.glob(fold_log_dir+'/Best*.csv')[0]
         best_log_df = pd.read_csv(best_log_csv_path)
         if process_pipeline == 'Train_Val':

@@ -140,7 +140,7 @@ def val_loop(device, num_classes, model, loader, criterion, retrun_WSI_feature=F
             val_logits = val_logits.unsqueeze(0)
             val_loss = criterion(val_logits, label)
             val_loss_log += val_loss.item()
-            val_result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
+            val_result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'probs': bag_predictions_after_normal[-1], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
     if retrun_WSI_feature:
         WSI_features = torch.cat(WSI_features, dim=0).cpu().numpy()
         return WSI_features
@@ -375,7 +375,7 @@ def clam_val_loop(device, num_classes, model, loader, criterion, bag_weight, ret
             instance_loss = forward_return.get('instance_loss', 0.0)
             total_loss = val_loss * bag_weight + instance_loss * (1 - bag_weight)
             val_loss_log += total_loss.item()
-            val_result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
+            val_result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'probs': bag_predictions_after_normal[-1], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
     if retrun_WSI_feature:
         WSI_features = torch.cat(WSI_features, dim=0).cpu().numpy()
         return WSI_features
@@ -444,7 +444,7 @@ def ds_val_loop(device, num_classes, model, loader, criterion, retrun_WSI_featur
             loss_max = criterion(max_prediction, label)
             val_loss = 0.5 * loss_bag + 0.5 * loss_max
             val_loss_log += val_loss.item()
-            val_result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
+            val_result.append({'slide_id': data[2][0], 'label': labels[-1][0], 'probs': bag_predictions_after_normal[-1], 'prediction': torch.argmax(val_logits, dim=1).cpu().numpy()[0]})
     if retrun_WSI_feature:
         WSI_features = torch.cat(WSI_features, dim=0).cpu().detach().numpy()
         return WSI_features
@@ -560,6 +560,9 @@ def dtfd_train_loop(device, model_list, loader, criterion, optimizer_list, sched
 def dtfd_val_loop(device, num_classes, model_list, loader, criterion, num_Group, grad_clipping, distill, total_instance, retrun_WSI_feature=False, return_WSI_attn=False):
     WSI_features = []
     WSI_attns = []
+    val_result = []
+    labels = []
+    bag_predictions_after_normal = []
     instance_per_group = total_instance // num_Group
     classifier, attention, dimReduction, attCls = model_list
     classifier.eval()
@@ -571,6 +574,7 @@ def dtfd_val_loop(device, num_classes, model_list, loader, criterion, num_Group,
     y_true = []
     for i, data in enumerate(loader):
         label = data[1].long().to(device)
+        labels.append(label.cpu().numpy())
         bag = data[0].to(device).float()
 
         slide_sub_preds = []
@@ -609,21 +613,37 @@ def dtfd_val_loop(device, num_classes, model_list, loader, criterion, num_Group,
             slide_sub_preds.append(tPredict)
 
         slide_pseudo_feat = torch.cat(slide_pseudo_feat, dim=0)
-        gSlidePred = torch.softmax(attCls(slide_pseudo_feat)['logits'], dim=1)
-        forward_return = attCls(slide_pseudo_feat, return_WSI_attn=return_WSI_attn, return_WSI_feature=retrun_WSI_feature)
+        output = attCls(slide_pseudo_feat, return_WSI_attn=return_WSI_attn, return_WSI_feature=retrun_WSI_feature)
+        gSlideLogits = output['logits']
+        gSlidePred = torch.softmax(gSlideLogits, dim=1)
+
+        current_probs = gSlidePred.detach().cpu().numpy()[0]
+        current_pred = torch.argmax(gSlidePred, dim=1).cpu().item()
+
+        bag_predictions_after_normal.append(current_probs)
+
+        val_result.append({
+            'slide_id': data[2][0],
+            'label': label.item(),
+            'probs': current_probs,
+            'prediction': current_pred
+        })
+
         if retrun_WSI_feature:
-            WSI_feature = forward_return['WSI_feature']
+            WSI_feature = output['WSI_feature']
             WSI_features.append(WSI_feature)
             continue
         if return_WSI_attn:
-            WSI_attn = forward_return['WSI_attn']
+            WSI_attn = output['WSI_attn']
             WSI_attns.append(WSI_attn)
             continue
-        loss = criterion(forward_return['logits'], label)
+
+        loss = criterion(gSlideLogits, label)
         total_loss += loss.item()
-        pred = (gSlidePred.cpu().data.numpy()).tolist()
-        y_score.extend(pred)
-        y_true.extend(label)
+
+        y_score.extend(gSlidePred.detach().cpu().numpy().tolist())
+        y_true.extend(label.detach().cpu().numpy().tolist())
+
     if retrun_WSI_feature:
         WSI_features = torch.cat(WSI_features, dim=0).cpu().detach().numpy()
         return WSI_features
@@ -632,4 +652,4 @@ def dtfd_val_loop(device, num_classes, model_list, loader, criterion, num_Group,
 
     total_loss /= len(loader)
     val_metrics = cal_scores(y_score, y_true, num_classes)
-    return total_loss, val_metrics
+    return total_loss, val_metrics, val_result

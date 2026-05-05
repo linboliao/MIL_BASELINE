@@ -1,6 +1,8 @@
 """
 Micro_MIL - Micro MIL with Graph Attention Network
 """
+import traceback
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,9 +10,10 @@ from torch.nn.parameter import Parameter
 from typing import Optional
 
 try:
-    from dgl.nn import GATConv
+    from dgl.nn.pytorch import GATConv
     import dgl
 except ImportError:
+    traceback.print_exc()
     print("Warning: dgl not installed. Please install it: pip install dgl")
     GATConv = None
     dgl = None

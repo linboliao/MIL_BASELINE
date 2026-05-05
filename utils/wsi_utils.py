@@ -5,140 +5,110 @@ import numpy as np
 import pandas as pd
 import h5py
 import torch
-import concurrent.futures
 from pathlib import Path
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-import threading
-
-import os
-import pandas as pd
-import torch
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
+
+from threading import Event
 
 
-class WSI_Dataset1(torch.utils.data.Dataset):
-    def __init__(self, dataset_info_csv_path, group, preload=True, num_workers=None, max_memory_gb=50):
-        assert group in ['train', 'val', 'test']
+class WSI_Dataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_info_csv_path, group, preload=True):
+        assert group in ['train', 'val', 'test'], "group must be in [train, val, test]"
+        mem_map = {'train': 150, 'val': 40, 'test': 40}
+        self.max_memory = (mem_map[group]) * (1024 ** 3)
 
         df = pd.read_csv(dataset_info_csv_path)
         self.slide_path_list = df[group + '_slide_path'].dropna().tolist()
         self.labels_list = df[group + '_label'].dropna().tolist()
+
         self.preloaded_data = [None] * len(self.slide_path_list)
-        self.max_memory = max_memory_gb * (1024 ** 3)
         self.used_memory = 0
+        self.stop_signal = Event()
 
         if preload and self.slide_path_list:
-            self._preload(num_workers or min(32, os.cpu_count() or 4))
+            self.parallel_preload(min(32, os.cpu_count() or 4))
 
-    def _preload(self, num_workers):
-        """并行预加载数据"""
-        print(f"开始预加载数据 (内存上限: {self.max_memory / (1024 ** 3):.1f}GB)...")
-
-        sorted_indices = self._sorted_indices()
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = {executor.submit(self._load_item, i): i for i in sorted_indices}
-
-            for future in tqdm(as_completed(futures), total=len(futures), ncols=100, desc="预加载进度"):
-                idx = futures[future]
-                data = future.result()
-
-                if data and self.used_memory < self.max_memory:
-                    self.preloaded_data[idx] = data
-                    self.used_memory += data[0].numel() * data[0].element_size()
-
-        loaded_count = sum(1 for item in self.preloaded_data if item is not None)
-        print(f"预加载完成! 成功加载 {loaded_count}/{len(self.slide_path_list)} 个样本")
-        print(f"内存占用: {self.used_memory / (1024 ** 3):.2f}GB")
-
-    def _sorted_indices(self):
-        """返回按文件大小排序的索引"""
-        sizes = [(os.path.getsize(p) if os.path.exists(p) else 0, i)
-                 for i, p in enumerate(self.slide_path_list)]
-        return [i for _, i in sorted(sizes, key=lambda x: x[0])]
-
-    def _load_item(self, idx):
-        """加载单个样本"""
-        try:
-            feat = torch.load(self.slide_path_list[idx])
-            label = torch.tensor(int(self.labels_list[idx]))
-            if feat.dim() == 3:
-                feat = feat.squeeze(0)
-            return (feat, label, Path(self.slide_path_list[idx]).stem)
-        except Exception as e:
+    def load_item(self, idx, check_memory=False):
+        """
+        核心加载逻辑
+        :param check_memory: 为True时受内存上限和熔断机制控制；为False时强制加载（用于__getitem__）
+        """
+        # 并行模式下，若已熔断则直接返回
+        if check_memory and self.stop_signal.is_set():
             return None
 
+        path = self.slide_path_list[idx]
+        try:
+            # 加载特征
+            if path.endswith('.h5'):
+                with h5py.File(path, 'r') as f:
+                    feat = torch.from_numpy(f['features'][:])
+            else:
+                feat = torch.load(path)
+                if isinstance(feat, dict):
+                    feat = feat.get('feats') or feat.get('features')
+
+            feat = feat.squeeze(0) if feat.dim() == 3 else feat
+
+            # 内存检查逻辑
+            if check_memory:
+                mem = feat.numel() * feat.element_size()
+                if self.used_memory + mem >= self.max_memory:
+                    self.stop_signal.set()  # 触发熔断
+                    return None
+                self.used_memory += mem
+
+            return feat, torch.tensor(int(self.labels_list[idx])), Path(path).stem
+        except Exception as e:
+            print(f"\n[Error] Index {idx} | Path: {path} | {e}")
+            return None
+
+    def parallel_preload(self, num_workers):
+        """并行预加载：按文件从小到大排序，确保内存利用率最大化"""
+        indices = sorted(range(len(self.slide_path_list)),
+                         key=lambda i: os.path.getsize(self.slide_path_list[i]) if os.path.exists(self.slide_path_list[i]) else 0)
+
+        with ThreadPoolExecutor(max_workers=num_workers) as pool:
+            # 注意：此处传递 check_memory=True
+            futures = {pool.submit(self.load_item, i, True): i for i in indices}
+            for f in tqdm(as_completed(futures), total=len(indices), desc="Preloading", ncols=100):
+                idx = futures[f]
+                res = f.result()
+                if res:
+                    self.preloaded_data[idx] = res
+
+        loaded_count = sum(1 for x in self.preloaded_data if x is not None)
+        print(f"Preload Done! Loaded {loaded_count}/{len(self.slide_path_list)} ({(self.used_memory / 1e9):.2f}GB)")
+
     def __getitem__(self, idx):
-        if self.preloaded_data[idx] is not None:
-            return self.preloaded_data[idx]
-        return self._load_item(idx) or (torch.zeros(1), torch.tensor(-1), '')
+        res = self.preloaded_data[idx]
+        if res is not None:
+            return res
+
+        res = self.load_item(idx, check_memory=False)
+
+        if res is None:
+            raise RuntimeError(f"Failed to load sample: {self.slide_path_list[idx]}")
+        return res
 
     def __len__(self):
         return len(self.slide_path_list)
 
     def is_None_Dataset(self):
-        return (self.__len__() == 0)
+        return self.__len__() == 0
 
     def is_with_labels(self):
-        return (len(self.labels_list) != 0)
-
-
-class WSI_Dataset(Dataset):
-    def __init__(self, dataset_info_csv_path, group):
-        assert group in ['train', 'val', 'test'], 'group must be in [train,val,test]'
-        self.dataset_info_csv_path = dataset_info_csv_path
-        self.dataset_df = pd.read_csv(self.dataset_info_csv_path)
-        self.slide_path_list = self.dataset_df[group + '_slide_path'].dropna().to_list()
-        self.labels_list = self.dataset_df[group + '_label'].dropna().to_list()
-
-    def __len__(self):
-        return len(self.slide_path_list)
-
-    def __getitem__(self, idx):
-
-        slide_path = self.slide_path_list[idx]
-        label = int(self.labels_list[idx])
-        label = torch.tensor(label)
-        slide_id = os.path.splitext(os.path.basename(slide_path))[0]
-
-        # adapting to different feature file types(https://github.com/mahmoodlab/TRIDENT)
-        if slide_path.endswith('.h5'):
-            with h5py.File(slide_path, 'r') as h5_file:
-                feat = h5_file['features'][:]
-                feat = torch.from_numpy(feat)
-        else:
-            feat = torch.load(slide_path)
-            # Handle dictionary format (e.g., {'feats': tensor, 'coords': tensor})
-            if isinstance(feat, dict):
-                if 'feats' in feat:
-                    feat = feat['feats']
-                elif 'features' in feat:
-                    feat = feat['features']
-                else:
-                    raise ValueError(f"Unknown dict format in {slide_path}, keys: {list(feat.keys())}")
-        if len(feat.shape) == 3:
-            feat = feat.squeeze(0)
-        return feat, label, slide_id
-
-    def is_None_Dataset(self):
-        return (self.__len__() == 0)
-
-    def is_with_labels(self):
-        return (len(self.labels_list) != 0)
+        return len(self.labels_list) > 0
 
     def get_balanced_sampler(self, replacement=True):
         from collections import Counter
         from torch.utils.data import WeightedRandomSampler
-
-        label_counts = Counter(self.labels_list)
-        weights = [1.0 / label_counts[label] for label in self.labels_list]
-        num_samples = len(self.labels_list)
-
-        sampler = WeightedRandomSampler(weights=weights, num_samples=num_samples, replacement=replacement)
-        return sampler
+        counts = Counter(self.labels_list)
+        weights = [1.0 / counts[label] for label in self.labels_list]
+        return WeightedRandomSampler(weights, len(self.labels_list), replacement=replacement)
 
 
 class CDP_MIL_WSI_Dataset(WSI_Dataset):
@@ -212,4 +182,3 @@ class WSI_MM_Dataset(Dataset):
 
     def is_with_labels(self):
         return (len(self.labels_list) != 0)
-

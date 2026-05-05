@@ -33,6 +33,7 @@ def main(arg):
         k_fold_csv_paths = sorted([os.path.join(dataset_root_dir,path) for path in os.listdir(dataset_root_dir)])
         process_time = get_time()
         for k_idx,k_fold_csv_path in enumerate(k_fold_csv_paths):
+
             args.Dataset.dataset_csv_path = k_fold_csv_path
             now_fold = k_idx+1
             args.Dataset.now_fold = now_fold
@@ -40,6 +41,7 @@ def main(arg):
             os.makedirs(log_root_dir,exist_ok=True)
             sub_dir = os.path.join(log_root_dir,args.Dataset.DATASET_NAME,args.General.MODEL_NAME)
             os.makedirs(sub_dir,exist_ok=True)
+            continue
             if now_fold != None:
                 fold_dir = f'fold_{now_fold}'
                 args.Logs.now_log_dir = os.path.join(sub_dir,f'seed_{args.General.seed}_{process_time}/{fold_dir}')

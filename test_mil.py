@@ -78,7 +78,8 @@ def test(args):
     with open(test_log_path,'w') as f:
         f.write(str(log_to_save))
     print(f"Test log saved at: {test_log_path}")
-    test_result_path = os.path.join(test_log_dir,f'Test_Result_{model_name}.csv')
+    # test_result_path = os.path.join(test_log_dir,f'Test_Result_{model_name}.csv')
+    test_result_path = os.path.join(test_log_dir, f'Infer_Result.csv')
     result_to_save = pd.DataFrame(test_result)
     result_to_save.to_csv(test_result_path,index=False,encoding='utf-8-sig')
     

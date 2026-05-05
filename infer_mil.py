@@ -63,7 +63,8 @@ def test(args):
     shutil.copyfile(yaml_path, new_yaml_path)
     new_test_dataset_csv_path = os.path.join(test_log_dir, f'Test_dataset_{yaml_args.Dataset.DATASET_NAME}.csv')
     shutil.copyfile(test_dataset_csv, new_test_dataset_csv_path)
-    test_result_path = os.path.join(test_log_dir, f'Infer_Result_{model_name}.csv')
+    # test_result_path = os.path.join(test_log_dir, f'Infer_Result_{model_name}.csv')
+    test_result_path = os.path.join(test_log_dir, f'Infer_Result.csv')
     result_to_save = pd.DataFrame(result)
     result_to_save.to_csv(test_result_path, index=False, encoding='utf-8-sig')
 

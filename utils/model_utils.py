@@ -275,12 +275,12 @@ def get_model_from_yaml(yaml_args):
             act=get_act(yaml_args.Model.act)
         )
         return mil_model
-    elif model_name == 'Mamba_MIL':
-        from modules.Mamba_MIL.mamba_mil import Mamba_MIL
+    elif model_name.lower() == 'mamba_mil':
+        from modules.MAMBA_MIL.mamba_mil import MAMBA_MIL
         layer = yaml_args.Model.layer if hasattr(yaml_args.Model, 'layer') else 2
         rate = yaml_args.Model.rate if hasattr(yaml_args.Model, 'rate') else 10
         mamba_type = yaml_args.Model.mamba_type if hasattr(yaml_args.Model, 'mamba_type') else 'SRMamba'
-        mil_model = Mamba_MIL(
+        mil_model = MAMBA_MIL(
             in_dim=yaml_args.Model.in_dim,
             num_classes=yaml_args.General.num_classes,
             dropout=yaml_args.Model.dropout,
