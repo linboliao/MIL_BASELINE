@@ -28,9 +28,9 @@ class WarmUpLR(_LRScheduler):
 
 
 def get_criterion(criterion):
-    if criterion == 'ce':
+    if criterion.loss == 'ce':
         return torch.nn.CrossEntropyLoss()
-    elif criterion == 'bce':
+    elif criterion.loss == 'bce':
         return torch.nn.BCEWithLogitsLoss()
     else:
         raise ValueError(f"Unknown criterion: {criterion}. Supported: 'ce', 'bce'")
