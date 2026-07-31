@@ -1,0 +1,79 @@
+csv_row,old_slide_id,new_slide_id,label,type,source_file
+1106,14074504.1,14074504.1有癌,1,TURP,datasets/Diagnosis/2.csv
+1107,14074504.3,14074504.3有癌,1,TURP,datasets/Diagnosis/2.csv
+1108,14081414.2,14081414.2有癌,1,RP,datasets/Diagnosis/2.csv
+1109,14081414.3,14081414.3有癌,1,RP,datasets/Diagnosis/2.csv
+1110,14081414.4,14081414.4有癌,1,RP,datasets/Diagnosis/2.csv
+1111,"1547583.13 ","1547583.13有癌 ",1,CNB,datasets/Diagnosis/2.csv
+1112,"1547583.17 ","1547583.17有癌 ",1,CNB,datasets/Diagnosis/2.csv
+1113,"1547583.20 ","1547583.20有癌 ",1,CNB,datasets/Diagnosis/2.csv
+1114,1604701.12,1604701.12有癌,1,RP,datasets/Diagnosis/2.csv
+1115,1604701.16,1604701.16有癌,1,RP,datasets/Diagnosis/2.csv
+1116,"1638897.11 ","1638897.11有癌 ",1,CNB,datasets/Diagnosis/2.csv
+1117,1638897.12,1638897.12有癌,1,RP,datasets/Diagnosis/2.csv
+1118,1638897.13,1638897.13有癌,1,RP,datasets/Diagnosis/2.csv
+1119,1638897.15,1638897.15有癌,1,RP,datasets/Diagnosis/2.csv
+1120,1638897.16,1638897.16有癌,1,RP,datasets/Diagnosis/2.csv
+1121,1638897.19,1638897.19有癌,1,RP,datasets/Diagnosis/2.csv
+1122,1638897.20,1638897.20有癌,1,RP,datasets/Diagnosis/2.csv
+1123,1638897.9,1638897.9有癌,1,RP,datasets/Diagnosis/2.csv
+1124,1734281.11,1734281.11有癌,1,RP,datasets/Diagnosis/2.csv
+1125,1734281.12,1734281.12有癌,1,RP,datasets/Diagnosis/2.csv
+1126,"1734281.22 ","1734281.22有癌 ",1,RP,datasets/Diagnosis/2.csv
+1127,1903481.1,1903481.1有癌,1,TURP,datasets/Diagnosis/2.csv
+1128,1903481.2,1903481.2有癌,1,TURP,datasets/Diagnosis/2.csv
+1129,1929314C,1929314C有癌,1,RP,datasets/Diagnosis/2.csv
+1130,1940230C,1940230C有癌,1,RP,datasets/Diagnosis/2.csv
+1131,2009632C,2009632C有癌,1,RP,datasets/Diagnosis/2.csv
+1132,2009632N,2009632N有癌,1,RP,datasets/Diagnosis/2.csv
+1133,2013152C,2013152C有癌,1,RP,datasets/Diagnosis/2.csv
+1134,2016650N,2016650N有癌,1,RP,datasets/Diagnosis/2.csv
+1135,201710562T,201710562T有癌,1,RP,datasets/Diagnosis/2.csv
+1136,2018363C,2018363C有癌,1,RP,datasets/Diagnosis/2.csv
+1137,2018917C,2018917C有癌,1,RP,datasets/Diagnosis/2.csv
+1138,2018917N,2018917N有癌,1,RP,datasets/Diagnosis/2.csv
+1139,2023132C,2023132C有癌,1,RP,datasets/Diagnosis/2.csv
+1140,2026321C,2026321C有癌,1,RP,datasets/Diagnosis/2.csv
+1643,1547583.16_,1547583.16无癌_,0,CNB,datasets/Diagnosis/2.csv
+1644,1547583.19_,1547583.19无癌_,0,RP,datasets/Diagnosis/2.csv
+1645,1547583.21_,1547583.21无癌_,0,CNB,datasets/Diagnosis/2.csv
+1646,1547583.4_,1547583.4无癌_,0,RP,datasets/Diagnosis/2.csv
+1647,1547583.8_,1547583.8无癌_,0,RP,datasets/Diagnosis/2.csv
+1648,1604701.14,1604701.14无癌,0,RP,datasets/Diagnosis/2.csv
+1649,1604701.15,1604701.15无癌,0,RP,datasets/Diagnosis/2.csv
+1650,1604701.17,1604701.17无癌,0,RP,datasets/Diagnosis/2.csv
+1651,1604701.18_,1604701.18无癌_,0,RP,datasets/Diagnosis/2.csv
+1652,1604701.1,1604701.1无癌,0,RP,datasets/Diagnosis/2.csv
+1653,1604701.5,1604701.5无癌,0,RP,datasets/Diagnosis/2.csv
+1654,1604701.8,1604701.8无癌,0,RP,datasets/Diagnosis/2.csv
+1655,1638897.17_,1638897.17无癌_,0,CNB,datasets/Diagnosis/2.csv
+1656,1638897.18,1638897.18无癌,0,RP,datasets/Diagnosis/2.csv
+2069,14074504.4,14074504.4无癌,0,TURP,datasets/Diagnosis/2.csv
+2070,14074504.5,14074504.5无癌,0,TURP,datasets/Diagnosis/2.csv
+2177,1638897.10,1638897.10无癌,0,RP,datasets/Diagnosis/2.csv
+2178,1734281.13,1734281.13无癌,0,RP,datasets/Diagnosis/2.csv
+2179,1734281.14,1734281.14无癌,0,RP,datasets/Diagnosis/2.csv
+2180,1734281.15,1734281.15无癌,0,RP,datasets/Diagnosis/2.csv
+2181,1734281.16,1734281.16无癌,0,RP,datasets/Diagnosis/2.csv
+2182,1734281.17,1734281.17无癌,0,RP,datasets/Diagnosis/2.csv
+2183,"1734281.19 ","1734281.19无癌 ",0,CNB,datasets/Diagnosis/2.csv
+2184,1734281.20,1734281.20无癌,0,RP,datasets/Diagnosis/2.csv
+2185,1734281.21,1734281.21无癌,0,RP,datasets/Diagnosis/2.csv
+2186,1734281.23,1734281.23无癌,0,RP,datasets/Diagnosis/2.csv
+2187,1734281.24,1734281.24无癌,0,RP,datasets/Diagnosis/2.csv
+2188,1734281.25,1734281.25无癌,0,RP,datasets/Diagnosis/2.csv
+2206,1858614.10,1858614.10无癌,0,RP,datasets/Diagnosis/2.csv
+2207,1858614.11,1858614.11无癌,0,RP,datasets/Diagnosis/2.csv
+2208,"1858614.13 ","1858614.13无癌 ",0,CNB,datasets/Diagnosis/2.csv
+2209,"1858614.14 ","1858614.14无癌 ",0,CNB,datasets/Diagnosis/2.csv
+2210,1858614.15,1858614.15无癌,0,RP,datasets/Diagnosis/2.csv
+2211,1858614.2,1858614.2无癌.,0,RP,datasets/Diagnosis/2.csv
+2212,1858614.3,1858614.3无癌.,0,RP,datasets/Diagnosis/2.csv
+2213,1858614.4,1858614.4无癌.,0,RP,datasets/Diagnosis/2.csv
+2214,1858614.5,1858614.5无癌.,0,RP,datasets/Diagnosis/2.csv
+2215,1858614.6,1858614.6无癌,0,RP,datasets/Diagnosis/2.csv
+2216,1858614.7,1858614.7无癌,0,RP,datasets/Diagnosis/2.csv
+2217,1858614.8,1858614.8无癌,0,RP,datasets/Diagnosis/2.csv
+2218,1858614.9,1858614.9无癌,0,RP,datasets/Diagnosis/2.csv
+2224,2023132N,2023132N无癌,0,RP,datasets/Diagnosis/2.csv
+2225,2026321N,2026321N无癌,0,RP,datasets/Diagnosis/2.csv

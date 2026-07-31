@@ -5,6 +5,11 @@ import glob
 import torch
 from torch.optim.lr_scheduler import _LRScheduler
 from .process_utils import get_act
+from .spe_model_utils import (
+    finalize_spe_checkpoint_selection,
+    record_epoch_checkpoint,
+    record_last_checkpoint,
+)
 
 
 class WarmUpLR(_LRScheduler):
@@ -28,12 +33,16 @@ class WarmUpLR(_LRScheduler):
 
 
 def get_criterion(criterion):
-    if criterion.loss == 'ce':
+    # Keep compatibility with the repository's existing ``criterion: ce``
+    # YAML files while also accepting the newer ``criterion: {loss: ce}``
+    # representation.
+    loss_name = criterion.loss if hasattr(criterion, 'loss') else criterion
+    if loss_name == 'ce':
         return torch.nn.CrossEntropyLoss()
-    elif criterion.loss == 'bce':
+    elif loss_name == 'bce':
         return torch.nn.BCEWithLogitsLoss()
     else:
-        raise ValueError(f"Unknown criterion: {criterion}. Supported: 'ce', 'bce'")
+        raise ValueError(f"Unknown criterion: {loss_name}. Supported: 'ce', 'bce'")
 
 
 def get_optimizer(args,model):
@@ -118,6 +127,8 @@ def save_best_model(args,model_state_dict,best_epoch):
 def save_last_model(args,model_state_dict,last_epoch):
     save_path = os.path.join(args.Logs.now_log_dir,f'Last_EPOCH_{last_epoch}.pth')
     torch.save(model_state_dict,save_path)
+    record_last_checkpoint(args, last_epoch)
+    finalize_spe_checkpoint_selection(args)
     
 def dtfd_save_best_model(args,state_dict,best_epoch):
     save_path = os.path.join(args.Logs.now_log_dir,f'Best_EPOCH_{best_epoch}.pth')
@@ -684,17 +695,36 @@ def get_model_from_yaml(yaml_args):
         raise ValueError(f'Invalid model name: {model_name}')
     
 def model_select(REVERSE,args,mil_model_state_dict,val_metrics,best_model_metric,best_val_metric,epoch,best_epoch):
+    is_best = False
     if val_metrics == None:
+        record_epoch_checkpoint(
+            args,
+            mil_model_state_dict,
+            epoch + 1,
+            val_metrics,
+            best_model_metric,
+            is_best=False,
+        )
         return best_val_metric,best_epoch
     if REVERSE and val_metrics[best_model_metric] < best_val_metric:
         best_epoch = epoch+1
         best_val_metric = val_metrics[best_model_metric]
         save_best_model(args,mil_model_state_dict,best_epoch)
+        is_best = True
 
     elif not REVERSE and val_metrics[best_model_metric] > best_val_metric:
         best_epoch = epoch+1
         best_val_metric = val_metrics[best_model_metric]
         save_best_model(args,mil_model_state_dict,best_epoch)
+        is_best = True
+    record_epoch_checkpoint(
+        args,
+        mil_model_state_dict,
+        epoch + 1,
+        val_metrics,
+        best_model_metric,
+        is_best=is_best,
+    )
     return best_val_metric,best_epoch
         
 

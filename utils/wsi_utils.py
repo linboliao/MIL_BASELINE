@@ -15,7 +15,7 @@ from threading import Event
 
 
 class WSI_Dataset(torch.utils.data.Dataset):
-    def __init__(self, dataset_info_csv_path, group, preload=True):
+    def __init__(self, dataset_info_csv_path, group, preload=False):
         assert group in ['train', 'val', 'test'], "group must be in [train, val, test]"
         mem_map = {'train': 150, 'val': 40, 'test': 40}
         self.max_memory = (mem_map[group]) * (1024 ** 3)
@@ -30,6 +30,22 @@ class WSI_Dataset(torch.utils.data.Dataset):
 
         if preload and self.slide_path_list:
             self.parallel_preload(min(32, os.cpu_count() or 4))
+
+    def __getstate__(self):
+        """Make the dataset serializable for Windows DataLoader workers.
+
+        ``threading.Event`` owns a native thread lock, which cannot be pickled
+        when PyTorch starts workers with the Windows ``spawn`` method.  The
+        event only coordinates optional in-process preloading, so it is safe to
+        recreate it independently inside every worker.
+        """
+        state = self.__dict__.copy()
+        state['stop_signal'] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.stop_signal = Event()
 
     def load_item(self, idx, check_memory=False):
         """

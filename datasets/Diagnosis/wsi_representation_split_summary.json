@@ -1,0 +1,195 @@
+{
+  "purpose": "development-only WSI representation selection",
+  "source_csv": "datasets/Diagnosis/train_val.csv",
+  "independent_test_data_included": false,
+  "patient_id_rule": "remove terminal 有癌/无癌 filename annotation, then take the substring before the first '.'",
+  "seed": 42,
+  "folds": 5,
+  "splitter": "deterministic greedy patient-group assignment balancing label-0 slides, label-1 slides, and patient counts",
+  "nas_root": "/NAS145/liaolinbo/Data/MXB/CLS",
+  "source_audit": {
+    "source_rows": 2235,
+    "included_rows": 2231,
+    "included_patients": 1349,
+    "exact_duplicate_rows_excluded": 2,
+    "conflicting_rows_excluded": 2,
+    "conflicting_slide_ids": [
+      "202510484.61"
+    ],
+    "label_counts": {
+      "0": 1095,
+      "1": 1136
+    },
+    "type_counts": {
+      "CNB": 744,
+      "RP": 986,
+      "TURP": 501
+    }
+  },
+  "fold_summaries": [
+    {
+      "fold": 1,
+      "train_slides": 1785,
+      "val_slides": 446,
+      "train_patients": 1080,
+      "val_patients": 269,
+      "train_label_counts": {
+        "0": 876,
+        "1": 909
+      },
+      "val_label_counts": {
+        "0": 219,
+        "1": 227
+      }
+    },
+    {
+      "fold": 2,
+      "train_slides": 1784,
+      "val_slides": 447,
+      "train_patients": 1079,
+      "val_patients": 270,
+      "train_label_counts": {
+        "0": 876,
+        "1": 908
+      },
+      "val_label_counts": {
+        "0": 219,
+        "1": 228
+      }
+    },
+    {
+      "fold": 3,
+      "train_slides": 1785,
+      "val_slides": 446,
+      "train_patients": 1079,
+      "val_patients": 270,
+      "train_label_counts": {
+        "0": 876,
+        "1": 909
+      },
+      "val_label_counts": {
+        "0": 219,
+        "1": 227
+      }
+    },
+    {
+      "fold": 4,
+      "train_slides": 1785,
+      "val_slides": 446,
+      "train_patients": 1079,
+      "val_patients": 270,
+      "train_label_counts": {
+        "0": 876,
+        "1": 909
+      },
+      "val_label_counts": {
+        "0": 219,
+        "1": 227
+      }
+    },
+    {
+      "fold": 5,
+      "train_slides": 1785,
+      "val_slides": 446,
+      "train_patients": 1079,
+      "val_patients": 270,
+      "train_label_counts": {
+        "0": 876,
+        "1": 909
+      },
+      "val_label_counts": {
+        "0": 219,
+        "1": 227
+      }
+    }
+  ],
+  "comparisons": {
+    "PFM": {
+      "CONCH": "feat_0_224/pt_files/CONCH",
+      "h-optimus-1": "feat_0_224/pt_files/h-optimus-1",
+      "mstar": "feat_0_224/pt_files/mstar",
+      "omiclip": "feat_0_224/pt_files/omiclip",
+      "UNI": "feat_0_224/pt_files/UNI",
+      "UNI2": "feat_0_224/pt_files/UNI2",
+      "virchow2": "feat_0_224/pt_files/virchow2"
+    },
+    "Mag": {
+      "20x": "feat_0_224/pt_files/h-optimus-1",
+      "10x": "feat_0_448/pt_files/h-optimus-1",
+      "5x": "feat_0_896/pt_files/h-optimus-1"
+    },
+    "Stains": {
+      "Macenko": "feat_0_448/stains/Macenko/pt_files/h-optimus-1",
+      "Reinhard": "feat_0_448/stains/Reinhard/pt_files/h-optimus-1",
+      "Vahadane": "feat_0_448/stains/Vahadane/pt_files/h-optimus-1"
+    }
+  },
+  "generated_fold_csv_count": 65,
+  "generated_fold_csvs": [
+    "datasets/Diagnosis/PFM/CONCH/Total_5-fold_CONCH_1fold.csv",
+    "datasets/Diagnosis/PFM/CONCH/Total_5-fold_CONCH_2fold.csv",
+    "datasets/Diagnosis/PFM/CONCH/Total_5-fold_CONCH_3fold.csv",
+    "datasets/Diagnosis/PFM/CONCH/Total_5-fold_CONCH_4fold.csv",
+    "datasets/Diagnosis/PFM/CONCH/Total_5-fold_CONCH_5fold.csv",
+    "datasets/Diagnosis/PFM/h-optimus-1/Total_5-fold_h-optimus-1_1fold.csv",
+    "datasets/Diagnosis/PFM/h-optimus-1/Total_5-fold_h-optimus-1_2fold.csv",
+    "datasets/Diagnosis/PFM/h-optimus-1/Total_5-fold_h-optimus-1_3fold.csv",
+    "datasets/Diagnosis/PFM/h-optimus-1/Total_5-fold_h-optimus-1_4fold.csv",
+    "datasets/Diagnosis/PFM/h-optimus-1/Total_5-fold_h-optimus-1_5fold.csv",
+    "datasets/Diagnosis/PFM/mstar/Total_5-fold_mstar_1fold.csv",
+    "datasets/Diagnosis/PFM/mstar/Total_5-fold_mstar_2fold.csv",
+    "datasets/Diagnosis/PFM/mstar/Total_5-fold_mstar_3fold.csv",
+    "datasets/Diagnosis/PFM/mstar/Total_5-fold_mstar_4fold.csv",
+    "datasets/Diagnosis/PFM/mstar/Total_5-fold_mstar_5fold.csv",
+    "datasets/Diagnosis/PFM/omiclip/Total_5-fold_omiclip_1fold.csv",
+    "datasets/Diagnosis/PFM/omiclip/Total_5-fold_omiclip_2fold.csv",
+    "datasets/Diagnosis/PFM/omiclip/Total_5-fold_omiclip_3fold.csv",
+    "datasets/Diagnosis/PFM/omiclip/Total_5-fold_omiclip_4fold.csv",
+    "datasets/Diagnosis/PFM/omiclip/Total_5-fold_omiclip_5fold.csv",
+    "datasets/Diagnosis/PFM/UNI/Total_5-fold_UNI_1fold.csv",
+    "datasets/Diagnosis/PFM/UNI/Total_5-fold_UNI_2fold.csv",
+    "datasets/Diagnosis/PFM/UNI/Total_5-fold_UNI_3fold.csv",
+    "datasets/Diagnosis/PFM/UNI/Total_5-fold_UNI_4fold.csv",
+    "datasets/Diagnosis/PFM/UNI/Total_5-fold_UNI_5fold.csv",
+    "datasets/Diagnosis/PFM/UNI2/Total_5-fold_UNI2_1fold.csv",
+    "datasets/Diagnosis/PFM/UNI2/Total_5-fold_UNI2_2fold.csv",
+    "datasets/Diagnosis/PFM/UNI2/Total_5-fold_UNI2_3fold.csv",
+    "datasets/Diagnosis/PFM/UNI2/Total_5-fold_UNI2_4fold.csv",
+    "datasets/Diagnosis/PFM/UNI2/Total_5-fold_UNI2_5fold.csv",
+    "datasets/Diagnosis/PFM/virchow2/Total_5-fold_virchow2_1fold.csv",
+    "datasets/Diagnosis/PFM/virchow2/Total_5-fold_virchow2_2fold.csv",
+    "datasets/Diagnosis/PFM/virchow2/Total_5-fold_virchow2_3fold.csv",
+    "datasets/Diagnosis/PFM/virchow2/Total_5-fold_virchow2_4fold.csv",
+    "datasets/Diagnosis/PFM/virchow2/Total_5-fold_virchow2_5fold.csv",
+    "datasets/Diagnosis/Mag/20x/Total_5-fold_20x_1fold.csv",
+    "datasets/Diagnosis/Mag/20x/Total_5-fold_20x_2fold.csv",
+    "datasets/Diagnosis/Mag/20x/Total_5-fold_20x_3fold.csv",
+    "datasets/Diagnosis/Mag/20x/Total_5-fold_20x_4fold.csv",
+    "datasets/Diagnosis/Mag/20x/Total_5-fold_20x_5fold.csv",
+    "datasets/Diagnosis/Mag/10x/Total_5-fold_10x_1fold.csv",
+    "datasets/Diagnosis/Mag/10x/Total_5-fold_10x_2fold.csv",
+    "datasets/Diagnosis/Mag/10x/Total_5-fold_10x_3fold.csv",
+    "datasets/Diagnosis/Mag/10x/Total_5-fold_10x_4fold.csv",
+    "datasets/Diagnosis/Mag/10x/Total_5-fold_10x_5fold.csv",
+    "datasets/Diagnosis/Mag/5x/Total_5-fold_5x_1fold.csv",
+    "datasets/Diagnosis/Mag/5x/Total_5-fold_5x_2fold.csv",
+    "datasets/Diagnosis/Mag/5x/Total_5-fold_5x_3fold.csv",
+    "datasets/Diagnosis/Mag/5x/Total_5-fold_5x_4fold.csv",
+    "datasets/Diagnosis/Mag/5x/Total_5-fold_5x_5fold.csv",
+    "datasets/Diagnosis/Stains/Macenko/Total_5-fold_Macenko_1fold.csv",
+    "datasets/Diagnosis/Stains/Macenko/Total_5-fold_Macenko_2fold.csv",
+    "datasets/Diagnosis/Stains/Macenko/Total_5-fold_Macenko_3fold.csv",
+    "datasets/Diagnosis/Stains/Macenko/Total_5-fold_Macenko_4fold.csv",
+    "datasets/Diagnosis/Stains/Macenko/Total_5-fold_Macenko_5fold.csv",
+    "datasets/Diagnosis/Stains/Reinhard/Total_5-fold_Reinhard_1fold.csv",
+    "datasets/Diagnosis/Stains/Reinhard/Total_5-fold_Reinhard_2fold.csv",
+    "datasets/Diagnosis/Stains/Reinhard/Total_5-fold_Reinhard_3fold.csv",
+    "datasets/Diagnosis/Stains/Reinhard/Total_5-fold_Reinhard_4fold.csv",
+    "datasets/Diagnosis/Stains/Reinhard/Total_5-fold_Reinhard_5fold.csv",
+    "datasets/Diagnosis/Stains/Vahadane/Total_5-fold_Vahadane_1fold.csv",
+    "datasets/Diagnosis/Stains/Vahadane/Total_5-fold_Vahadane_2fold.csv",
+    "datasets/Diagnosis/Stains/Vahadane/Total_5-fold_Vahadane_3fold.csv",
+    "datasets/Diagnosis/Stains/Vahadane/Total_5-fold_Vahadane_4fold.csv",
+    "datasets/Diagnosis/Stains/Vahadane/Total_5-fold_Vahadane_5fold.csv"
+  ]
+}
