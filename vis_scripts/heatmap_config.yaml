@@ -8,9 +8,9 @@ exp_arguments:
   batch_size: 256
 data_arguments: 
   # wsi paths need to be in a csv file with a column named 'wsi_path'
-  wsi_csv: heatmaps/demo/wsi.csv
+  wsi_csv: wsi.csv
   # preset file for segmentation/patching
-  preset: presets/bwh_biopsy.csv                
+  preset: /NAS2/Data1/lbliao/Code-195/PrePATH/presets/tcga.csv
 patching_arguments:
   # arguments for patching
   patch_size: 256
@@ -19,13 +19,13 @@ patching_arguments:
   custom_downsample: 1
 encoder_arguments:
   # arguments for the pretrained encoder model
-  model_name: conch # currently support: ['vit_s_imagenet','resnet50_imagenet','plip','conch','uni','ctranspath','gigapath','virchow','virchow_v2','conch_v1_5']
-  model_weights_dir: /dir/to/conch/weight_dir # directory containing model weights
+  model_name: uni # currently support: ['vit_s_imagenet','resnet50_imagenet','plip','conch','uni','ctranspath','gigapath','virchow','virchow_v2','conch_v1_5']
+  model_weights_dir: /NAS2/Data1/lbliao/Code-195/PrePATH/models/ckpts/uni.bin # directory containing model weights
   target_img_size: 224 # resize images to this size before feeding to encoder
 model_arguments: 
   # arguments for initializing mil-model from checkpoint
-  yaml_path: /path/to/mil_baseline_model.yaml 
-  ckpt_path: /path/to/mil_baseline_model.ckpt
+  yaml_path: /NAS2/Data1/lbliao/Code-195/MIL_BASELINE/configs/Contrast/ABMIL/UNI.yaml
+  ckpt_path: /NAS2/Data1/lbliao/Code-195/MIL_BASELINE/result/Contrast/PFM/UNI/seed_42_2026-03-19-13-55/fold_3/Last_EPOCH_34.pth
 heatmap_arguments:
   # downsample at which to visualize heatmap (-1 refers to downsample closest to 32x downsample)
   vis_level: 1

@@ -217,6 +217,8 @@ def main(args):
         
         features_path = os.path.join(process_save_dir, slide_id+'.pt')
         h5_path = os.path.join(process_save_dir, slide_id+'.h5')
+        features_path = '/NAS145/liaolinbo/Data/MXB/CLS/feat_0_224/pt_files/202536334.38.40.pt'
+        h5_path = '/NAS145/liaolinbo/Data/MXB/CLS/feat_0_224/h5_files/202536334.38.40.h5'
     
 
         ##### check if h5_features_file exists ######
@@ -376,7 +378,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Heatmap inference script')
-    parser.add_argument('--heatmap_config_yaml', type=str, default= '/path/to/your/heatmap_yaml', help="path of heatmap_config_template.yaml")
+    parser.add_argument('--heatmap_config_yaml', type=str, default= 'heatmap_config.yaml', help="path of heatmap_config_template.yaml")
     args = parser.parse_args()
     main(args)
     

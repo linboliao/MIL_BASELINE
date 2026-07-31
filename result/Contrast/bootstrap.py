@@ -2,7 +2,7 @@ import os
 import argparse
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, precision_score, recall_score, confusion_matrix
 
 # 导入你原有的核心工具函数和推理入口
 from test_mil import test
@@ -75,7 +75,7 @@ def run_real_inference_bootstrap_by_types(best_configs, original_test_csv, root_
             )
 
             # 调用真实前向推理
-            test(args_infer)
+            # test(args_infer)
 
             infer_res_path = os.path.join(current_log_dir, 'Infer_Result.csv')
             if os.path.exists(infer_res_path):
@@ -117,9 +117,26 @@ def run_real_inference_bootstrap_by_types(best_configs, original_test_csv, root_
                 y_true_sub = df_sub['label'].values
                 y_pred_sub = df_sub['weighted_pred'].values
                 acc_sub = accuracy_score(y_true_sub, y_pred_sub)
+                bacc_sub = balanced_accuracy_score(y_true_sub, y_pred_sub)
+                macro_pre_sub = precision_score(y_true_sub, y_pred_sub, average='macro', zero_division=0)
+                macro_rec_sub = recall_score(y_true_sub, y_pred_sub, average='macro', zero_division=0)
 
-                bootstrap_results[t].append({'bootstrap_id': b, 'accuracy': acc_sub})
-                print(f"  ➔ Subtype [{t:<4}] 样本数: {len(df_sub):<3} | Accuracy: {acc_sub:.4f}")
+                tn, fp, fn, tp = confusion_matrix(y_true_sub, y_pred_sub, labels=[0, 1]).ravel()
+
+                # 计算敏感性和特异性 (带 0 分母保护)
+                sens_sub = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                spec_sub = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+
+                # 存入结果
+                bootstrap_results[t].append({
+                    'bootstrap_id': b,
+                    'accuracy': acc_sub,
+                    'bacc': bacc_sub,
+                    'macro_pre': macro_pre_sub,
+                    'macro_recall': macro_rec_sub,
+                    'sensitivity': sens_sub,
+                    'specificity': spec_sub
+                })
         else:
             print(f"[-] 错误: Bootstrap {b} 的某些折推理失败，跳过该轮所有亚型指标。")
 
@@ -156,25 +173,25 @@ def run_real_inference_bootstrap_by_types(best_configs, original_test_csv, root_
 
 
 if __name__ == '__main__':
-    # BEST_CONFIGS = [
-    #     {'fold': 'fold_1', 'exp': 'DTFD_MIL', 'weight_file': 'seed_42_2026-04-09-01-36/fold_1/Best_EPOCH_9.pth', 'score': 0.9959344708803972},
-    #     {'fold': 'fold_2', 'exp': 'AMD_MIL', 'weight_file': 'seed_42_2026-04-09-04-07/fold_2/Best_EPOCH_1.pth', 'score': 0.996975887206601},
-    #     {'fold': 'fold_3', 'exp': 'MAMBA_MIL', 'weight_file': 'seed_42_2026-04-10-00-07/fold_3/Best_EPOCH_1.pth', 'score': 0.9957742529840584},
-    #     {'fold': 'fold_4', 'exp': 'DTFD_MIL', 'weight_file': 'seed_42_2026-04-09-01-36/fold_4/Best_EPOCH_2.pth', 'score': 0.9985780661699912},
-    #     {'fold': 'fold_5', 'exp': 'ILRA_MIL', 'weight_file': 'seed_42_2026-04-08-23-34/fold_5/Best_EPOCH_26.pth', 'score': 0.9981177412895474}
-    # ]
     BEST_CONFIGS = [
-        {'fold': 'fold_1', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_1/Best_EPOCH_5.pth', 'score': 0.966375640016248},
-        {'fold': 'fold_2', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_2/Best_EPOCH_1.pth', 'score': 0.9798621435329098},
-        {'fold': 'fold_3', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_3/Best_EPOCH_3.pth', 'score': 0.9528606509217458},
-        {'fold': 'fold_4', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_4/Best_EPOCH_5.pth', 'score': 0.9731057719305284},
-        {'fold': 'fold_5', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_5/Best_EPOCH_7.pth', 'score': 0.9776231477773328}
+        {'fold': 'fold_1', 'exp': 'DTFD_MIL', 'weight_file': 'seed_42_2026-04-09-01-36/fold_1/Best_EPOCH_9.pth', 'score': 0.9959344708803972},
+        {'fold': 'fold_2', 'exp': 'AMD_MIL', 'weight_file': 'seed_42_2026-04-09-04-07/fold_2/Best_EPOCH_1.pth', 'score': 0.996975887206601},
+        {'fold': 'fold_3', 'exp': 'MAMBA_MIL', 'weight_file': 'seed_42_2026-04-10-00-07/fold_3/Best_EPOCH_1.pth', 'score': 0.9957742529840584},
+        {'fold': 'fold_4', 'exp': 'DTFD_MIL', 'weight_file': 'seed_42_2026-04-09-01-36/fold_4/Best_EPOCH_2.pth', 'score': 0.9985780661699912},
+        {'fold': 'fold_5', 'exp': 'ILRA_MIL', 'weight_file': 'seed_42_2026-04-08-23-34/fold_5/Best_EPOCH_26.pth', 'score': 0.9981177412895474}
     ]
+    # BEST_CONFIGS = [
+    #     {'fold': 'fold_1', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_1/Best_EPOCH_5.pth', 'score': 0.966375640016248},
+    #     {'fold': 'fold_2', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_2/Best_EPOCH_1.pth', 'score': 0.9798621435329098},
+    #     {'fold': 'fold_3', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_3/Best_EPOCH_3.pth', 'score': 0.9528606509217458},
+    #     {'fold': 'fold_4', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_4/Best_EPOCH_5.pth', 'score': 0.9731057719305284},
+    #     {'fold': 'fold_5', 'exp': 'CLAM_MB_MIL', 'weight_file': 'seed_42_2026-04-08-22-15/fold_5/Best_EPOCH_7.pth', 'score': 0.9776231477773328}
+    # ]
 
     # 修改为包含 type 分类信息的全新原始测试集路径
-    ORIGINAL_TEST_CSV = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/Contrast/test_new.csv'
+    ORIGINAL_TEST_CSV = '/NAS2/lbliao/Code-138/MIL_BASELINE/datasets/Contrast/test_new.csv'
     ROOT_DIR = 'MIL'
-    OUTPUT_ROOT = 'bootstrap/ste'
+    OUTPUT_ROOT = 'bootstrap/spe'
 
     run_real_inference_bootstrap_by_types(
         best_configs=BEST_CONFIGS,

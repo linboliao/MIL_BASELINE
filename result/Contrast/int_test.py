@@ -65,11 +65,6 @@ def select_standard_ensemble(root_dir, target_metric='val_macro_f1'):
     df = pd.DataFrame(all_data)
 
     # ==========================================
-    # 🛠️ 【核心退化点 2】：拒绝跨模型动态 Winner 策略
-    # 标准集成必须是单一确定模型的 5 折融合（行业通常使用经典 Baseline 或者是你的主架构）
-    # 这里我们根据你之前 Winner 里占大头的传统最稳模型（如 DTFD_MIL 或你指定的默认基线）进行过滤
-    # ==========================================
-    # 提示：你可以把 'DTFD_MIL' 修改为你想要作为标准灰色宽峰的任意单模名字
     DEFAULT_BASELINE_MODEL = "CLAM_MB_MIL"
 
     df_baseline = df[df['exp'] == DEFAULT_BASELINE_MODEL]
@@ -234,7 +229,8 @@ if __name__ == '__main__':
         test_csv_path = os.path.join(args.dataset_root, args.exp_name, 'test.csv')
         ensemble_output_dir = os.path.join(args.output_root, args.exp_name)
     else:
-        test_csv_path = 'datasets/Contrast/test_138.csv'
+        # test_csv_path = 'datasets/Contrast/test_195.csv'
+        test_csv_path = 'datasets/Contrast/External/test_path.csv'
         ensemble_output_dir = args.output_root
     os.makedirs(ensemble_output_dir, exist_ok=True)
 
