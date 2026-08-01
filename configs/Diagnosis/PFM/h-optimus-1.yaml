@@ -19,7 +19,7 @@ General:
             max_checkpoints: 5
 
 Dataset:
-    DATASET_NAME: h-optimus-1
+    DATASET_NAME: H-optimus-1
     comparison_group: PFM
     variant: h-optimus-1
     dataset_csv_path: null
@@ -29,7 +29,7 @@ Dataset:
         replacement: true
 
 Logs:
-    log_root_dir: result/Diagnosis/Mag
+    log_root_dir: result/Diagnosis/PFM
 
 Model:
     in_dim: 1536

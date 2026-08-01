@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("result/Diagnosis/Mag/OOF"),
+        default=Path("result/Diagnosis"),
     )
     parser.add_argument(
         "--assignment-csv",

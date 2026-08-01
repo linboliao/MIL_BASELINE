@@ -29,7 +29,7 @@ Dataset:
         replacement: true
 
 Logs:
-    log_root_dir: result/Diagnosis/Mag
+    log_root_dir: result/Diagnosis/PFM
 
 Model:
     in_dim: 1536

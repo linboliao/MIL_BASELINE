@@ -19,12 +19,12 @@ Dataset:
   magnification: 10x
   stain_normalization: Reinhard
   dataset_csv_path: null
-  dataset_root_dir: datasets/Diagnosis/Stains/Reinhard
+  dataset_root_dir: datasets/Diagnosis/MIL
   balanced_sampler:
     use: false
     replacement: true
 Logs:
-  log_root_dir: result/Diagnosis/MIL_Supplementary
+  log_root_dir: result/Diagnosis/MIL
 Model:
   in_dim: 1536
   dropout: 0.1

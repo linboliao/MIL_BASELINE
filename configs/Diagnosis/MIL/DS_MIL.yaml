@@ -19,7 +19,7 @@ Dataset:
   magnification: 10x
   stain_normalization: Reinhard
   dataset_csv_path: null
-  dataset_root_dir: datasets/Diagnosis/Stains/Reinhard
+  dataset_root_dir: datasets/Diagnosis/MIL
   balanced_sampler:
     use: false
     replacement: true

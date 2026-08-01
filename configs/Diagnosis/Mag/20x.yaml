@@ -21,7 +21,7 @@ General:
 Dataset:
     # This is the same feature representation as PFM/h-optimus-1 and reuses
     # that training run instead of fitting five duplicate models.
-    DATASET_NAME: h-optimus-1
+    DATASET_NAME: 20x
     comparison_group: Mag
     variant: 20x
     dataset_csv_path: null

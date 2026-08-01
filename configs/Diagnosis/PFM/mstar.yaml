@@ -19,7 +19,7 @@ General:
             max_checkpoints: 5
 
 Dataset:
-    DATASET_NAME: mstar
+    DATASET_NAME: mSTAR
     comparison_group: PFM
     variant: mstar
     dataset_csv_path: null
@@ -29,7 +29,7 @@ Dataset:
         replacement: true
 
 Logs:
-    log_root_dir: result/Diagnosis/Mag
+    log_root_dir: result/Diagnosis/PFM
 
 Model:
     in_dim: 1024

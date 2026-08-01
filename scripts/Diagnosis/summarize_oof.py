@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-root",
         type=Path,
-        default=Path("result/Diagnosis/Mag/OOF"),
+        default=Path("result/Diagnosis/"),
     )
     parser.add_argument(
         "--output-dir",
