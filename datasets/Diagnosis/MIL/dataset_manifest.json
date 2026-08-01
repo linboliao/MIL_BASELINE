@@ -1,0 +1,70 @@
+{
+  "version": "patient-disjoint-independent-test",
+  "representation": "h-optimus-1",
+  "magnification": "10x",
+  "stain_normalization": "Reinhard",
+  "development_source": "datasets/Diagnosis/Stains/Reinhard",
+  "independent_test": {
+    "source_csv": "datasets/Diagnosis/test_wo_type.csv",
+    "output_csv": "datasets/Diagnosis/test_patient_disjoint.csv",
+    "path_prefix": "/NAS145/liaolinbo/Data/MXB/CLS测试/feat_0_448/stains/Reinhard/pt_files/h-optimus-1/",
+    "source_slides": 345,
+    "removed_slides": 47,
+    "retained_slides": 298,
+    "removed_patient_ids": 17,
+    "patient_overlap_after_filtering": 0,
+    "independence_pass": true,
+    "label_counts": {
+      "0": 30,
+      "1": 268
+    },
+    "type_counts": {
+      "CNB": 27,
+      "RP": 215,
+      "TURP": 56
+    },
+    "removal_audit_csv": "datasets/Diagnosis/MIL_PatientDisjoint/removed_test_overlap_audit.csv"
+  },
+  "folds": [
+    {
+      "fold": 1,
+      "file": "Total_5-fold_MIL_PatientDisjoint_1fold.csv",
+      "train": 1785,
+      "val": 446,
+      "test": 298,
+      "sha256": "bf1917cc82b28cd1fe76b8cb2132a8a5111d3b1349d43241a17cd91309372613"
+    },
+    {
+      "fold": 2,
+      "file": "Total_5-fold_MIL_PatientDisjoint_2fold.csv",
+      "train": 1784,
+      "val": 447,
+      "test": 298,
+      "sha256": "4402dea9ab47f28bc71ed946c3cfb57ca17beecb4ec1cf41947c50f5daba4528"
+    },
+    {
+      "fold": 3,
+      "file": "Total_5-fold_MIL_PatientDisjoint_3fold.csv",
+      "train": 1785,
+      "val": 446,
+      "test": 298,
+      "sha256": "15191b4f16a638485b48ed0d8bf76c8caef696d21ea91471b6a54717f8e5242e"
+    },
+    {
+      "fold": 4,
+      "file": "Total_5-fold_MIL_PatientDisjoint_4fold.csv",
+      "train": 1785,
+      "val": 446,
+      "test": 298,
+      "sha256": "f7660e798ddd4535cbd23841fb60a6ad3fd16cf5111207ff16750df520f3364d"
+    },
+    {
+      "fold": 5,
+      "file": "Total_5-fold_MIL_PatientDisjoint_5fold.csv",
+      "train": 1785,
+      "val": 446,
+      "test": 298,
+      "sha256": "fed056e573aefe9792750859c18bd53fbe9d2c508534ddf99b09e889bd1a19e5"
+    }
+  ]
+}
