@@ -1,4 +1,4 @@
-"""Run the paper-defined hierarchical SPE from saved MIL trajectories.
+"""Run hierarchical SPE with development-only MIL member selection.
 
 This command performs inference only.  It never retrains base MIL models and
 never uses independent-test labels to select states, folds, architectures, or
@@ -28,7 +28,13 @@ from torch.utils.data import DataLoader
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from ensemble.spe import architecture_disagreement, fit_architecture_weights
+from ensemble.spe import (
+    architecture_disagreement,
+    fit_architecture_weights,
+    patient_equal_sample_weights,
+    residual_similarity_matrix,
+    select_architectures,
+)
 from utils.model_utils import get_model_from_yaml
 from utils.wsi_utils import WSI_Dataset
 from utils.yaml_utils import read_yaml
@@ -422,8 +428,8 @@ def main() -> None:
     experiment = settings["experiment"]
     architectures = settings["architectures"]
     names = [str(item["name"]) for item in architectures]
-    if len(names) != 11 or len(set(names)) != 11:
-        raise ValueError("The paper-defined SPE requires 11 unique MIL architectures.")
+    if len(names) < 2 or len(set(names)) != len(names):
+        raise ValueError("SPE requires at least two unique candidate MIL architectures.")
 
     development_folds = fold_csvs(resolve_path(experiment["development_dataset_root"]))
     test_folds = fold_csvs(resolve_path(experiment["independent_test_dataset_root"]))
@@ -477,24 +483,76 @@ def main() -> None:
     probability_columns = [f"prob_{name}" for name in names]
     probability_matrix = oof[probability_columns].to_numpy(dtype=np.float64)
     weighting = settings.get("weighting", {})
-    fit, similarity = fit_architecture_weights(
-        probability_matrix,
+    selection_settings = settings.get("selection", {})
+    selection_enabled = bool(selection_settings.get("enabled", True))
+    if selection_enabled:
+        configured_max_members = selection_settings.get(
+            "max_members", min(6, len(names))
+        )
+        selection = select_architectures(
+            probability_matrix,
+            labels=oof["label"].to_numpy(),
+            patient_ids=oof["patient_id"].astype(str).to_numpy(),
+            fold_ids=oof["fold"].to_numpy(),
+            architecture_names=names,
+            diversity_lambda=float(weighting.get("diversity_lambda", 0.05)),
+            min_members=int(selection_settings.get("min_members", 2)),
+            max_members=(
+                None
+                if configured_max_members is None
+                else int(configured_max_members)
+            ),
+            min_cv_improvement=float(selection_settings.get("min_cv_improvement", 1e-3)),
+            require_better_than_null=bool(
+                selection_settings.get("require_better_than_null", True)
+            ),
+            max_individual_log_loss_gap=selection_settings.get(
+                "max_individual_log_loss_gap", 0.10
+            ),
+            max_iterations=int(weighting.get("max_iterations", 5000)),
+            tolerance=float(weighting.get("tolerance", 1e-10)),
+        )
+        selected_names = list(selection.selected_names)
+        selection_manifest = selection.as_dict()
+        eligible_names = set(selection.eligible_names)
+        selection_steps = {step["added"]: step for step in selection.steps}
+    else:
+        selected_names = names.copy()
+        selection_manifest = {
+            "enabled": False,
+            "candidate_names": names,
+            "selected_names": names,
+        }
+        eligible_names = set(names)
+        selection_steps = {}
+    print(f"SPE selected {len(selected_names)}/{len(names)} architectures: {selected_names}")
+    selected_indices = [names.index(name) for name in selected_names]
+    selected_probability_matrix = probability_matrix[:, selected_indices]
+    fit, _ = fit_architecture_weights(
+        selected_probability_matrix,
         labels=oof["label"].to_numpy(),
         patient_ids=oof["patient_id"].astype(str).to_numpy(),
-        architecture_names=names,
+        architecture_names=selected_names,
         diversity_lambda=float(weighting.get("diversity_lambda", 0.05)),
         max_iterations=int(weighting.get("max_iterations", 5000)),
         tolerance=float(weighting.get("tolerance", 1e-10)),
     )
-    architecture_weights = np.asarray(fit.weights, dtype=np.float64)
-    oof["spe_prob_1"] = probability_matrix @ architecture_weights
+    selected_weights = np.asarray(fit.weights, dtype=np.float64)
+    architecture_weights = np.zeros(len(names), dtype=np.float64)
+    architecture_weights[selected_indices] = selected_weights
+    oof["spe_prob_1"] = selected_probability_matrix @ selected_weights
     oof["spe_prediction"] = (oof["spe_prob_1"] >= threshold).astype(int)
     oof["architecture_disagreement"] = architecture_disagreement(
-        probability_matrix, architecture_weights
+        selected_probability_matrix, selected_weights
     )
     atomic_csv(oof, output_root / "oof_architecture_predictions.csv")
 
-    similarity_frame = pd.DataFrame(similarity, index=names, columns=names)
+    all_similarity = residual_similarity_matrix(
+        probability_matrix,
+        oof["label"].to_numpy(),
+        patient_equal_sample_weights(oof["patient_id"].astype(str).to_numpy()),
+    )
+    similarity_frame = pd.DataFrame(all_similarity, index=names, columns=names)
     similarity_frame.index.name = "architecture"
     atomic_csv(similarity_frame.reset_index(), output_root / "residual_similarity.csv")
 
@@ -502,10 +560,9 @@ def main() -> None:
     for index, name in enumerate(names):
         architecture_probability = probability_matrix[:, index]
         clipped = np.clip(architecture_probability, 1e-7, 1 - 1e-7)
-        patient_weights = np.asarray(
-            [1.0 / int((oof["patient_id"].astype(str) == patient).sum()) for patient in oof["patient_id"].astype(str)]
+        patient_weights = patient_equal_sample_weights(
+            oof["patient_id"].astype(str).to_numpy()
         )
-        patient_weights /= patient_weights.sum()
         log_loss = -np.sum(
             patient_weights
             * (oof["label"] * np.log(clipped) + (1 - oof["label"]) * np.log(1 - clipped))
@@ -513,10 +570,19 @@ def main() -> None:
         weight_rows.append(
             {
                 "architecture": name,
+                "eligible": name in eligible_names,
+                "selected": name in selected_names,
+                "selection_step": selection_steps.get(name, {}).get("step"),
+                "selection_cv_log_loss": selection_steps.get(name, {}).get(
+                    "cross_validated_log_loss"
+                ),
+                "selection_improvement": selection_steps.get(name, {}).get(
+                    "improvement"
+                ),
                 "weight": architecture_weights[index],
                 "patient_equal_oof_log_loss": float(log_loss),
                 "mean_residual_similarity_to_others": float(
-                    np.delete(similarity[index], index).mean()
+                    np.delete(all_similarity[index], index).mean()
                 ),
             }
         )
@@ -546,38 +612,51 @@ def main() -> None:
         fold_variance_columns.append(fold_column)
     atomic_csv(test_base, output_root / "architecture_test_predictions.csv")
 
-    test_matrix = test_base[test_probability_columns].to_numpy(dtype=np.float64)
-    state_variances = test_base[state_variance_columns].to_numpy(dtype=np.float64)
-    fold_variances = test_base[fold_variance_columns].to_numpy(dtype=np.float64)
+    test_matrix = test_base[test_probability_columns].to_numpy(dtype=np.float64)[
+        :, selected_indices
+    ]
+    state_variances = test_base[state_variance_columns].to_numpy(dtype=np.float64)[
+        :, selected_indices
+    ]
+    fold_variances = test_base[fold_variance_columns].to_numpy(dtype=np.float64)[
+        :, selected_indices
+    ]
     final = test_base[["slide_id", "patient_id", "type", "label"]].copy()
-    final["prob_1"] = test_matrix @ architecture_weights
+    final["prob_1"] = test_matrix @ selected_weights
     final["prob_0"] = 1.0 - final["prob_1"]
     final["prediction"] = (final["prob_1"] >= threshold).astype(int)
-    final["state_disagreement"] = np.sqrt(state_variances @ architecture_weights)
-    final["fold_disagreement"] = np.sqrt(fold_variances @ architecture_weights)
+    final["state_disagreement"] = np.sqrt(state_variances @ selected_weights)
+    final["fold_disagreement"] = np.sqrt(fold_variances @ selected_weights)
     final["architecture_disagreement"] = architecture_disagreement(
-        test_matrix, architecture_weights
+        test_matrix, selected_weights
     )
     final["equal_weight_prob_1"] = test_matrix.mean(axis=1)
     final["equal_weight_prediction"] = (
         final["equal_weight_prob_1"] >= threshold
     ).astype(int)
     final["majority_vote_prediction"] = (
-        (test_matrix >= threshold).sum(axis=1) >= (len(names) // 2 + 1)
+        (test_matrix >= threshold).sum(axis=1) >= (len(selected_names) // 2 + 1)
     ).astype(int)
     atomic_csv(final, output_root / "spe_predictions.csv")
 
     config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "method": "stability-prioritized-hierarchical-ensemble",
-        "paper_hierarchy": ["stable_checkpoint_states", "five_folds", "eleven_architectures"],
+        "hierarchy": [
+            "stable_checkpoint_states",
+            "five_folds",
+            "development_only_architecture_selection",
+            "selected_architecture_weighting",
+        ],
         "spe_config": str(config_path),
         "spe_config_sha256": config_hash,
         "development_only_weight_fit": True,
+        "development_only_architecture_selection": selection_enabled,
         "independent_test_labels_used_for_fit": False,
         "classification_threshold": threshold,
         "weight_fit": fit.as_dict(),
+        "architecture_selection": selection_manifest,
         "architectures": run_manifest,
         "outputs": {
             "oof": str(output_root / "oof_architecture_predictions.csv"),

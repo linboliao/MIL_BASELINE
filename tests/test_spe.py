@@ -10,6 +10,7 @@ from ensemble.spe import (
     fit_architecture_weights,
     patient_equal_sample_weights,
     residual_similarity_matrix,
+    select_architectures,
 )
 from scripts.Diagnosis.run_spe import (
     architecture_test_prediction,
@@ -58,6 +59,26 @@ class TestSPE(unittest.TestCase):
         self.assertEqual(similarity.shape, (2, 2))
         disagreement = architecture_disagreement(probabilities, [0.5, 0.5])
         np.testing.assert_allclose(disagreement, [0.0, 0.1, 0.1], atol=1e-8)
+
+    def test_architecture_selection_filters_unsuitable_members(self):
+        labels = np.tile([0, 1], 10)
+        patients = np.array([f"p{index}" for index in range(len(labels))])
+        folds = np.repeat(np.arange(1, 6), 4)
+        good = np.where(labels == 1, 0.85, 0.15)
+        complement = np.where(labels == 1, 0.80, 0.20)
+        unsuitable = 1.0 - good
+        selection = select_architectures(
+            np.column_stack([good, complement, unsuitable]),
+            labels,
+            patients,
+            folds,
+            ["good", "complement", "unsuitable"],
+            min_members=2,
+            max_members=3,
+            min_cv_improvement=1e-4,
+        )
+        self.assertEqual(selection.selected_names, ("good", "complement"))
+        self.assertNotIn("unsuitable", selection.eligible_names)
 
     def test_paper_stable_interval_and_even_spacing(self):
         values = [0.70, 0.701, 0.702, 0.701, 0.703, 0.720, 0.721, 0.722, 0.721, 0.720, 0.719]

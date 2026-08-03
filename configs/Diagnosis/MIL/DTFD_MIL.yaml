@@ -11,10 +11,10 @@ General:
     patience: 30
     metric: macro_f1
   checkpoint:
-    save_mode: best_last
+    save_mode: every_epoch
 Dataset:
   DATASET_NAME: HOptimus1_10x_Reinhard
-  comparison_group: MIL_supplementary
+  comparison_group: MIL
   representation: h-optimus-1
   magnification: 10x
   stain_normalization: Reinhard
@@ -24,7 +24,7 @@ Dataset:
     use: false
     replacement: true
 Logs:
-  log_root_dir: result/Diagnosis/MIL_Supplementary
+  log_root_dir: result/Diagnosis/MIL
 Model:
   in_dim: 1536
   mdim: 512

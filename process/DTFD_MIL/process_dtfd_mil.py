@@ -95,15 +95,15 @@ def process_DTFD_MIL(args):
         
         train_loss,cost_time = dtfd_train_loop(device,model_list,train_dataloader,criterion,optimizer_list,scheduler_list,num_Group,grad_clipping,distill,total_instance)
         if process_pipeline == 'Train_Val_Test':
-            val_loss,val_metrics = dtfd_val_loop(device,num_classes,model_list,val_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
-            test_loss,test_metrics = dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
+            val_loss,val_metrics, _ = dtfd_val_loop(device,num_classes,model_list,val_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
+            test_loss,test_metrics, _ = dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
         elif process_pipeline == 'Train_Val':
-            val_loss,val_metrics = dtfd_val_loop(device,num_classes,model_list,val_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
+            val_loss,val_metrics, _ = dtfd_val_loop(device,num_classes,model_list,val_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
             test_loss,test_metrics = None,None
         elif process_pipeline == 'Train_Test':
             val_loss,val_metrics,test_loss,test_metrics = None,None,None,None
             if epoch+1 == args.General.num_epochs:
-                test_loss,test_metrics = dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
+                test_loss,test_metrics, _ = dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
 
 
         FAIL = '\033[91m'

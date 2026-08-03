@@ -5,7 +5,7 @@ experiment:
   preload: false
   classification_threshold: 0.5
   development_dataset_root: datasets/Diagnosis/Stains/Reinhard
-  independent_test_dataset_root: datasets/Diagnosis/MIL_PatientDisjoint
+  independent_test_dataset_root: datasets/Diagnosis/MIL
   output_root: result/Diagnosis/SPE
 
 # The manuscript specifies accurate, complementary architecture members but
@@ -16,6 +16,17 @@ weighting:
   diversity_lambda: 0.05
   max_iterations: 5000
   tolerance: 1.0e-10
+
+# Candidate membership is locked from development OOF predictions before the
+# final weight fit. Forward selection refits on four folds and accepts a member
+# only when it improves patient-equal log loss on the held-out fold.
+selection:
+  enabled: true
+  min_members: 2
+  max_members: 6
+  min_cv_improvement: 0.001
+  require_better_than_null: true
+  max_individual_log_loss_gap: 0.10
 
 # run_dir: null selects the latest complete five-fold run containing an SPE
 # checkpoint selection in every fold. Pin explicit run directories before the
@@ -53,4 +64,13 @@ architectures:
     run_dir: null
   - name: GDF_MIL
     config: configs/Diagnosis/MIL/GDF_MIL.yaml
+    run_dir: null
+  - name: RRT_MIL
+    config: configs/Diagnosis/MIL/RRT_MIL.yaml
+    run_dir: null
+  - name: DS_MIL
+    config: configs/Diagnosis/MIL/DS_MIL.yaml
+    run_dir: null
+  - name: DTFD_MIL
+    config: configs/Diagnosis/MIL/DTFD_MIL.yaml
     run_dir: null

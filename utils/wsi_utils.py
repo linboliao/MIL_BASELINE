@@ -15,7 +15,7 @@ from threading import Event
 
 
 class WSI_Dataset(torch.utils.data.Dataset):
-    def __init__(self, dataset_info_csv_path, group, preload=False):
+    def __init__(self, dataset_info_csv_path, group, preload=True):
         assert group in ['train', 'val', 'test'], "group must be in [train, val, test]"
         mem_map = {'train': 150, 'val': 40, 'test': 40}
         self.max_memory = (mem_map[group]) * (1024 ** 3)
