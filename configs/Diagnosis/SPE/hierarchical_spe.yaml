@@ -59,9 +59,9 @@ architectures:
   - name: MSM_MIL
     config: configs/Diagnosis/MIL/MSM_MIL.yaml
     run_dir: null
-  - name: TDA_MIL
-    config: configs/Diagnosis/MIL/TDA_MIL.yaml
-    run_dir: null
+#  - name: TDA_MIL
+#    config: configs/Diagnosis/MIL/TDA_MIL.yaml
+#    run_dir: null
   - name: GDF_MIL
     config: configs/Diagnosis/MIL/GDF_MIL.yaml
     run_dir: null

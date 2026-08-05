@@ -15,4 +15,4 @@ export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libffi.so.7
 #CUDA_VISIBLE_DEVICES=4 python -u scripts/Diagnosis/oof_mil.py --yaml-path configs/Diagnosis/Mag/5x.yaml --device cuda:0
 #CUDA_VISIBLE_DEVICES=2 python -u scripts/Diagnosis/oof_mil.py --yaml-path configs/Diagnosis/Stains/Macenko.yaml --device cuda:0
 #CUDA_VISIBLE_DEVICES=3 python -u scripts/Diagnosis/oof_mil.py --yaml-path configs/Diagnosis/Stains/Reinhard.yaml --device cuda:0
-#CUDA_VISIBLE_DEVICES=4 python -u scripts/Diagnosis/oof_mil.py --yaml-path configs/Diagnosis/Stains/Vahadane.yaml --device cuda:0
+CUDA_VISIBLE_DEVICES=4 python -u scripts/Diagnosis/oof_mil.py --yaml-path configs/Diagnosis/Stains/Vahadane.yaml --device cuda:0
