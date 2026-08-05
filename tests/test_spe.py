@@ -4,6 +4,7 @@ import unittest
 
 import numpy as np
 import pandas as pd
+import torch
 
 from ensemble.spe import (
     architecture_disagreement,
@@ -14,12 +15,42 @@ from ensemble.spe import (
 )
 from scripts.Diagnosis.run_spe import (
     architecture_test_prediction,
+    configured_devices,
+    dtfd_positive_probability,
+    merge_architecture_test_predictions,
+    prepare_inference_model,
     trajectory_predictions,
 )
+from utils.model_utils import get_model_from_yaml
+from utils.yaml_utils import read_yaml
 from utils.spe_model_utils import _evenly_spaced_records, _stable_intervals
 
 
 class TestSPE(unittest.TestCase):
+    def test_device_configuration(self):
+        self.assertEqual(configured_devices({"device": "cpu"}, None), ["cpu"])
+        self.assertEqual(
+            configured_devices({"devices": ["cpu"]}, "cpu"),
+            ["cpu"],
+        )
+        with self.assertRaisesRegex(ValueError, "unique"):
+            configured_devices({"devices": ["cpu", "cpu"]}, None)
+
+    def test_dtfd_component_checkpoint_and_forward(self):
+        config = read_yaml("configs/Diagnosis/MIL/DTFD_MIL.yaml")
+        component_names = ("classifier", "attention", "dimReduction", "attCls")
+        components = get_model_from_yaml(config)
+        checkpoint = {
+            name: component.state_dict()
+            for name, component in zip(component_names, components)
+        }
+        loaded = prepare_inference_model(config, checkpoint, torch.device("cpu"))
+        probability = dtfd_positive_probability(
+            torch.randn(1, 10, int(config.Model.in_dim)), loaded, config
+        )
+        self.assertEqual(len(loaded), 4)
+        self.assertTrue(0.0 <= float(probability) <= 1.0)
+
     def test_patient_equal_weights(self):
         patients = np.array(["a", "a", "a", "b"])
         weights = patient_equal_sample_weights(patients)
@@ -121,6 +152,26 @@ class TestSPE(unittest.TestCase):
         np.testing.assert_allclose(architecture["prob_1"], [0.2, 0.9])
         np.testing.assert_allclose(architecture["state_variance"], [0.01, 0.01])
         np.testing.assert_allclose(architecture["fold_variance"], [0.005, 0.005])
+
+    def test_test_architecture_merge_uses_immutable_metadata(self):
+        metadata = pd.DataFrame(
+            {
+                "slide_id": ["s1", "s2"],
+                "patient_id": ["p1", "p2"],
+                "type": ["CNB", "RP"],
+                "label": [0, 1],
+            }
+        )
+        predictions = {}
+        for name, values in (("a", [0.1, 0.8]), ("b", [0.2, 0.9])):
+            frame = metadata.copy()
+            frame["prob_1"] = values
+            frame["state_variance"] = [0.01, 0.02]
+            frame["fold_variance"] = [0.03, 0.04]
+            predictions[name] = frame
+        merged = merge_architecture_test_predictions(predictions, ["a", "b"])
+        self.assertEqual(merged.shape, (2, 10))
+        np.testing.assert_allclose(merged["prob_b"], [0.2, 0.9])
 
 
 if __name__ == "__main__":

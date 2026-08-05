@@ -31,6 +31,28 @@ python -u scripts/Diagnosis/run_spe.py --spe-config configs/Diagnosis/SPE/hierar
 bash scripts/Diagnosis/run_spe.sh
 ```
 
+For architecture-level multi-GPU inference, assign one worker process to each
+visible GPU either from the command line:
+
+```bash
+python -u scripts/Diagnosis/run_spe.py \
+  --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml \
+  --devices cuda:0,cuda:1,cuda:2,cuda:3
+```
+
+The shell wrapper also forwards arguments:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/Diagnosis/run_spe.sh \
+  --devices cuda:0,cuda:1,cuda:2,cuda:3
+```
+
+or set `experiment.devices: [cuda:0, cuda:1, cuda:2, cuda:3]` in YAML. Each
+GPU evaluates its MIL shard sequentially, while shards run concurrently. Do not
+repeat the same GPU ID. `num_workers` applies to every GPU process, so increase
+it conservatively to avoid excessive CPU workers and disk contention. Existing
+checkpoint prediction CSVs remain reusable unless `--overwrite` is supplied.
+
 For the final paper run, replace every `run_dir: null` with the exact immutable
 training-run directory. Automatic latest-run discovery is convenient during
 development but is not appropriate for a locked analysis.
