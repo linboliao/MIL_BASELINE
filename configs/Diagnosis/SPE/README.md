@@ -61,6 +61,58 @@ Do not refit v3 from v1/v2: those directories contain probabilities from the
 old checkpoint policy and do not contain TDA_MIL. Cached refitting still uses
 only OOF labels; independent-test labels remain excluded.
 
+## Learnable aggregators
+
+The constrained linear stacker retains every architecture and learns one
+global non-negative weight vector. It adds shrinkage toward uniform weights, a
+per-architecture cap, and a minimum effective-member constraint:
+
+```bash
+python -u scripts/Diagnosis/spe/run.py \
+  --spe-config configs/Diagnosis/SPE/constrained_linear_stacking.yaml \
+  --refit-from result/Diagnosis/SPE/v3_bacc
+```
+
+RA-SPE fits a small sample-specific gating network and reports meta-level
+cross-fitted OOF predictions. Checkpoint-state variance is used as a
+reliability feature. When an older merged OOF CSV omitted it, the runner first
+recovers it from each architecture's cached `oof_predictions.csv`; only a cache
+without those member files falls back to probability, entropy, and
+inter-architecture disagreement features:
+
+```bash
+python -u scripts/Diagnosis/spe/run.py \
+  --spe-config configs/Diagnosis/SPE/ra_spe.yaml \
+  --refit-from result/Diagnosis/SPE/v3_bacc
+```
+
+For the final paper experiment, run RA-SPE without `--refit-from` (or regenerate
+the merged OOF cache) so `use_state_variance: true` is effective. The locked
+network is saved as `ra_spe_aggregator.pt`; sample-specific weights are written
+to both OOF and independent prediction CSVs. Neither method learns a decision
+threshold: classification remains fixed at 0.5.
+
+To lock sensitivity to the v3 development reference and optimize specificity
+and BAcc over equal-weight architecture subsets, use:
+
+```bash
+python -u scripts/Diagnosis/spe/run.py \
+  --spe-config configs/Diagnosis/SPE/sensitivity_constrained.yaml \
+  --refit-from result/Diagnosis/SPE/v3_bacc
+```
+
+The effective threshold is selected from positive-class OOF order statistics
+and recorded in `manifest.json`. Pass that threshold to the performance
+summarizer; for the current locked v5 result the command is:
+
+```bash
+python scripts/Diagnosis/spe/summarize_performance.py \
+  --predictions result/Diagnosis/SPE/v5_sensitivity_constrained/spe_predictions.csv \
+  --output-dir result/Diagnosis/SPE/v5_sensitivity_constrained/performance \
+  --threshold 0.455923717620198 \
+  --skip-center
+```
+
 or set `experiment.devices: [cuda:0, cuda:1, cuda:2, cuda:3]` in YAML. Each
 GPU evaluates its MIL shard sequentially, while shards run concurrently. Do not
 repeat the same GPU ID. `num_workers` applies to every GPU process, so increase

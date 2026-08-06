@@ -19,6 +19,7 @@ No independent-test labels or predictions enter weight fitting.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from itertools import combinations
 from typing import Sequence
 
 import numpy as np
@@ -65,6 +66,29 @@ class ArchitectureSelection:
 
 
 @dataclass(frozen=True)
+class ConstrainedStackingFit:
+    """Diagnostics for the shrinkage-constrained linear OOF stacker."""
+
+    architecture_names: tuple[str, ...]
+    weights: tuple[float, ...]
+    diversity_lambda: float
+    shrinkage_lambda: float
+    max_weight: float
+    min_effective_members: float
+    effective_members: float
+    objective: float
+    patient_equal_log_loss: float
+    residual_similarity_penalty: float
+    shrinkage_penalty: float
+    optimizer: str
+    converged: bool
+    iterations: int
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class BalancedAccuracySelection:
     """Fold-held-out architecture selection driven by Balanced Accuracy."""
 
@@ -80,6 +104,52 @@ class BalancedAccuracySelection:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class DiversityVetoSelection:
+    """OOF-only selection for a specificity-oriented two-member ensemble."""
+
+    candidate_names: tuple[str, ...]
+    eligible_veto_names: tuple[str, ...]
+    anchor_name: str
+    veto_name: str
+    individual_balanced_accuracies: tuple[float, ...]
+    anchor_veto_residual_similarity: float
+    max_veto_bacc_gap: float
+    classification_threshold: float
+
+    @property
+    def selected_names(self) -> tuple[str, str]:
+        return (self.anchor_name, self.veto_name)
+
+    def as_dict(self) -> dict:
+        values = asdict(self)
+        values["selected_names"] = self.selected_names
+        values["aggregation"] = "minimum_probability"
+        return values
+
+
+@dataclass(frozen=True)
+class SensitivityConstrainedSelection:
+    """OOF-only equal-weight subset selected under a sensitivity floor."""
+
+    candidate_names: tuple[str, ...]
+    selected_names: tuple[str, ...]
+    reference_sensitivity: float
+    sensitivity_floor: float
+    cross_validated_balanced_accuracy: float
+    cross_validated_sensitivity: float
+    cross_validated_specificity: float
+    classification_threshold: float
+    min_members: int
+    max_members: int
+    evaluated_subsets: int
+
+    def as_dict(self) -> dict:
+        values = asdict(self)
+        values["aggregation"] = "equal_probability_mean"
+        return values
 
 
 def _as_1d(values: Sequence, name: str) -> np.ndarray:
@@ -182,6 +252,54 @@ def _project_probability_simplex(values: np.ndarray) -> np.ndarray:
     theta = cumulative[rho - 1] / rho
     projected = np.maximum(values - theta, 0.0)
     return projected / projected.sum()
+
+
+def _project_capped_simplex(values: np.ndarray, upper: float) -> np.ndarray:
+    """Project onto {sum(w)=1, 0<=w<=upper} by scalar bisection."""
+    values = np.asarray(values, dtype=np.float64)
+    if upper * len(values) < 1.0 - 1e-12:
+        raise ValueError("max_weight is infeasible for the architecture count.")
+    low = float(np.min(values) - upper)
+    high = float(np.max(values))
+    for _ in range(100):
+        midpoint = (low + high) / 2.0
+        projected = np.clip(values - midpoint, 0.0, upper)
+        if projected.sum() > 1.0:
+            low = midpoint
+        else:
+            high = midpoint
+    projected = np.clip(values - high, 0.0, upper)
+    # The bisection error is tiny; this correction retains the box constraint.
+    residual = 1.0 - float(projected.sum())
+    if abs(residual) > 1e-12:
+        free = np.flatnonzero(
+            projected < upper - 1e-12 if residual > 0 else projected > 1e-12
+        )
+        for index in free:
+            room = upper - projected[index] if residual > 0 else projected[index]
+            delta = np.sign(residual) * min(abs(residual), room)
+            projected[index] += delta
+            residual -= delta
+            if abs(residual) <= 1e-12:
+                break
+    return projected
+
+
+def _enforce_effective_members(
+    weights: np.ndarray, min_effective_members: float
+) -> np.ndarray:
+    """Shrink a simplex vector toward uniform until its effective size is valid."""
+    if min_effective_members <= 1.0:
+        return weights
+    uniform = np.full_like(weights, 1.0 / len(weights))
+    maximum_l2 = 1.0 / min_effective_members
+    if float(weights @ weights) <= maximum_l2 + 1e-12:
+        return weights
+    direction = weights - uniform
+    squared_norm = float(direction @ direction)
+    allowed = max(0.0, maximum_l2 - 1.0 / len(weights))
+    alpha = min(1.0, np.sqrt(allowed / max(squared_norm, EPSILON)))
+    return uniform + alpha * direction
 
 
 def _objective_and_gradient(
@@ -382,6 +500,167 @@ def fit_architecture_weights(
         objective=objective,
         patient_equal_log_loss=log_loss,
         residual_similarity_penalty=penalty,
+        optimizer=optimizer_name,
+        converged=bool(converged),
+        iterations=int(iterations),
+    )
+    return fit, similarity
+
+
+def fit_constrained_linear_stacking(
+    probabilities: np.ndarray,
+    labels: Sequence,
+    patient_ids: Sequence,
+    architecture_names: Sequence[str] | None = None,
+    diversity_lambda: float = 0.02,
+    shrinkage_lambda: float = 0.10,
+    max_weight: float | None = None,
+    min_effective_members: float | None = None,
+    max_iterations: int = 5000,
+    tolerance: float = 1e-10,
+    class_balance: bool = True,
+) -> tuple[ConstrainedStackingFit, np.ndarray]:
+    """Fit a conservative linear stacker using development OOF predictions.
+
+    The objective combines patient/class-balanced BCE, residual-correlation
+    regularization, and L2 shrinkage toward uniform averaging.  A per-member
+    weight cap and a lower bound on ``1 / sum(w**2)`` prevent collapse onto a
+    small architecture subset.  The returned model is therefore learnable but
+    remains close to the manuscript's equal-weight reliability prior.
+    """
+    probabilities = _validate_probabilities(probabilities)
+    labels_array = _as_1d(labels, "labels")
+    patients = np.asarray(patient_ids, dtype=str)
+    architecture_count = probabilities.shape[1]
+    if len(labels_array) != len(probabilities) or len(patients) != len(labels_array):
+        raise ValueError("Labels/patient IDs do not match probability rows.")
+    if not np.isin(labels_array, [0.0, 1.0]).all():
+        raise ValueError("Constrained stacking supports binary labels 0/1 only.")
+    if diversity_lambda < 0 or shrinkage_lambda < 0:
+        raise ValueError("Regularization strengths must be non-negative.")
+    if max_iterations < 1 or tolerance <= 0:
+        raise ValueError("Invalid optimizer settings.")
+
+    names = (
+        tuple(f"architecture_{index}" for index in range(architecture_count))
+        if architecture_names is None
+        else tuple(str(name) for name in architecture_names)
+    )
+    if len(names) != architecture_count or len(set(names)) != len(names):
+        raise ValueError("architecture_names must uniquely match probability columns.")
+
+    cap = 1.0 if max_weight is None else float(max_weight)
+    if cap <= 0 or cap > 1 or cap * architecture_count < 1.0 - 1e-12:
+        raise ValueError("max_weight must be feasible and lie in (0, 1].")
+    minimum_effective = (
+        1.0 if min_effective_members is None else float(min_effective_members)
+    )
+    if minimum_effective < 1.0 or minimum_effective > architecture_count:
+        raise ValueError("min_effective_members must lie in [1, architecture_count].")
+
+    sample_weights = (
+        class_patient_equal_sample_weights(labels_array, patients)
+        if class_balance
+        else patient_equal_sample_weights(patients)
+    )
+    similarity = residual_similarity_matrix(probabilities, labels_array, sample_weights)
+    uniform = np.full(architecture_count, 1.0 / architecture_count, dtype=np.float64)
+
+    def objective_and_gradient(weights: np.ndarray) -> tuple[float, np.ndarray]:
+        ensemble = np.clip(probabilities @ weights, EPSILON, 1.0 - EPSILON)
+        log_loss = _weighted_log_loss(ensemble, labels_array, sample_weights)
+        diversity = float(weights @ similarity @ weights)
+        shrinkage = float((weights - uniform) @ (weights - uniform))
+        gradient = probabilities.T @ (
+            sample_weights
+            * (ensemble - labels_array)
+            / (ensemble * (1.0 - ensemble))
+        )
+        gradient += 2.0 * diversity_lambda * similarity @ weights
+        gradient += 2.0 * shrinkage_lambda * (weights - uniform)
+        return (
+            float(log_loss + diversity_lambda * diversity + shrinkage_lambda * shrinkage),
+            np.asarray(gradient),
+        )
+
+    optimizer_name = "projected-gradient"
+    converged = False
+    iterations = 0
+    fitted = uniform.copy()
+    try:
+        from scipy.optimize import minimize
+
+        constraints: list[dict] = [
+            {"type": "eq", "fun": lambda value: float(value.sum() - 1.0)}
+        ]
+        if minimum_effective > 1.0:
+            constraints.append(
+                {
+                    "type": "ineq",
+                    "fun": lambda value: float(
+                        1.0 / minimum_effective - value @ value
+                    ),
+                }
+            )
+        result = minimize(
+            objective_and_gradient,
+            uniform,
+            method="SLSQP",
+            jac=True,
+            bounds=[(0.0, cap)] * architecture_count,
+            constraints=constraints,
+            options={"maxiter": max_iterations, "ftol": tolerance, "disp": False},
+        )
+        if result.success and np.isfinite(result.x).all():
+            fitted = _project_capped_simplex(result.x, cap)
+            fitted = _enforce_effective_members(fitted, minimum_effective)
+            converged = True
+            iterations = int(result.nit)
+            optimizer_name = "scipy-slsqp"
+    except ImportError:
+        pass
+
+    if not converged:
+        current, _ = objective_and_gradient(fitted)
+        for iterations in range(1, max_iterations + 1):
+            _, gradient = objective_and_gradient(fitted)
+            step = 1.0
+            candidate = fitted
+            candidate_objective = current
+            for _ in range(40):
+                candidate = _project_capped_simplex(fitted - step * gradient, cap)
+                candidate = _enforce_effective_members(candidate, minimum_effective)
+                candidate_objective, _ = objective_and_gradient(candidate)
+                if candidate_objective <= current + 1e-12:
+                    break
+                step *= 0.5
+            delta = float(np.linalg.norm(candidate - fitted, ord=1))
+            improvement = current - candidate_objective
+            fitted, current = candidate, candidate_objective
+            if delta <= tolerance or abs(improvement) <= tolerance:
+                converged = True
+                break
+
+    ensemble = np.clip(probabilities @ fitted, EPSILON, 1.0 - EPSILON)
+    log_loss = _weighted_log_loss(ensemble, labels_array, sample_weights)
+    diversity = float(fitted @ similarity @ fitted)
+    shrinkage = float((fitted - uniform) @ (fitted - uniform))
+    objective = float(
+        log_loss + diversity_lambda * diversity + shrinkage_lambda * shrinkage
+    )
+    effective = float(1.0 / np.sum(fitted**2))
+    fit = ConstrainedStackingFit(
+        architecture_names=names,
+        weights=tuple(float(value) for value in fitted),
+        diversity_lambda=float(diversity_lambda),
+        shrinkage_lambda=float(shrinkage_lambda),
+        max_weight=cap,
+        min_effective_members=minimum_effective,
+        effective_members=effective,
+        objective=objective,
+        patient_equal_log_loss=float(log_loss),
+        residual_similarity_penalty=diversity,
+        shrinkage_penalty=shrinkage,
         optimizer=optimizer_name,
         converged=bool(converged),
         iterations=int(iterations),
@@ -735,6 +1014,211 @@ def select_architectures_for_balanced_accuracy(
             else float(max_individual_bacc_gap)
         ),
         steps=tuple(steps),
+    )
+
+
+def select_diversity_veto(
+    probabilities: np.ndarray,
+    labels: Sequence,
+    patient_ids: Sequence,
+    architecture_names: Sequence[str],
+    classification_threshold: float = 0.5,
+    max_veto_bacc_gap: float = 0.03,
+) -> DiversityVetoSelection:
+    """Choose an accurate anchor and a complementary negative-veto member.
+
+    The anchor is the architecture with the highest development OOF Balanced
+    Accuracy.  Among architectures whose OOF BAcc is close to the anchor, the
+    veto member is the one with the least-correlated residual errors.  At
+    inference the ensemble probability is ``min(anchor_prob, veto_prob)``.
+    Consequently, a positive decision requires agreement while either member
+    may veto a likely false positive.  Independent-test data are not used.
+    """
+    probabilities = _validate_probabilities(probabilities)
+    labels_array = _as_1d(labels, "labels")
+    patients = np.asarray(patient_ids, dtype=str)
+    names = tuple(str(name) for name in architecture_names)
+    sample_count, architecture_count = probabilities.shape
+
+    if architecture_count < 2:
+        raise ValueError("Diversity veto requires at least two architectures.")
+    if len(labels_array) != sample_count or len(patients) != sample_count:
+        raise ValueError("Labels/patient IDs do not match probability rows.")
+    if len(names) != architecture_count or len(set(names)) != architecture_count:
+        raise ValueError("architecture_names must uniquely match probability columns.")
+    if not np.isin(labels_array, [0.0, 1.0]).all():
+        raise ValueError("Diversity veto requires binary labels 0/1.")
+    if not 0.0 < classification_threshold < 1.0:
+        raise ValueError("classification_threshold must lie strictly between 0 and 1.")
+    if max_veto_bacc_gap < 0:
+        raise ValueError("max_veto_bacc_gap must be non-negative.")
+
+    individual_scores = np.asarray(
+        [
+            _balanced_accuracy(
+                labels_array, probabilities[:, index], classification_threshold
+            )
+            for index in range(architecture_count)
+        ]
+    )
+    anchor = min(
+        range(architecture_count),
+        key=lambda index: (-individual_scores[index], names[index]),
+    )
+    minimum_score = float(individual_scores[anchor] - max_veto_bacc_gap)
+    eligible = [
+        index
+        for index in range(architecture_count)
+        if index != anchor and individual_scores[index] >= minimum_score
+    ]
+    if not eligible:
+        raise ValueError(
+            "No veto member passed the OOF BAcc gate; increase "
+            "aggregation.max_veto_bacc_gap."
+        )
+
+    sample_weights = class_patient_equal_sample_weights(labels_array, patients)
+    similarity = residual_similarity_matrix(
+        probabilities, labels_array, sample_weights
+    )
+    veto = min(
+        eligible,
+        key=lambda index: (similarity[anchor, index], names[index]),
+    )
+    return DiversityVetoSelection(
+        candidate_names=names,
+        eligible_veto_names=tuple(names[index] for index in eligible),
+        anchor_name=names[anchor],
+        veto_name=names[veto],
+        individual_balanced_accuracies=tuple(
+            float(value) for value in individual_scores
+        ),
+        anchor_veto_residual_similarity=float(similarity[anchor, veto]),
+        max_veto_bacc_gap=float(max_veto_bacc_gap),
+        classification_threshold=float(classification_threshold),
+    )
+
+
+def _sensitivity_specificity(
+    labels: np.ndarray, predictions: np.ndarray
+) -> tuple[float, float]:
+    predictions = np.asarray(predictions, dtype=bool)
+    positive = labels == 1.0
+    negative = labels == 0.0
+    if not positive.any() or not negative.any():
+        raise ValueError("Sensitivity/specificity require both binary classes.")
+    return (
+        float(predictions[positive].mean()),
+        float((~predictions[negative]).mean()),
+    )
+
+
+def _highest_threshold_at_sensitivity(
+    positive_probabilities: np.ndarray, sensitivity_floor: float
+) -> float:
+    """Highest observed-data threshold retaining the requested sensitivity."""
+    ordered = np.sort(np.asarray(positive_probabilities, dtype=np.float64))
+    allowed_false_negatives = int(
+        np.floor((1.0 - sensitivity_floor) * len(ordered) + 1e-12)
+    )
+    allowed_false_negatives = min(max(allowed_false_negatives, 0), len(ordered) - 1)
+    return float(np.nextafter(ordered[allowed_false_negatives], -np.inf))
+
+
+def select_sensitivity_constrained_subset(
+    probabilities: np.ndarray,
+    labels: Sequence,
+    architecture_names: Sequence[str],
+    reference_probabilities: Sequence,
+    reference_threshold: float = 0.5,
+    sensitivity_margin: float = 0.0,
+    min_members: int = 1,
+    max_members: int | None = 8,
+) -> SensitivityConstrainedSelection:
+    """Maximize OOF specificity/BAcc without lowering reference sensitivity.
+
+    Every candidate is an equal-probability architecture subset. Its threshold
+    is the largest positive-class OOF order statistic that satisfies the
+    sensitivity floor. This makes sensitivity a constraint rather than a
+    post-hoc trade-off and leaves independent-test labels entirely untouched.
+    """
+    probabilities = _validate_probabilities(probabilities)
+    labels_array = _as_1d(labels, "labels")
+    reference = _as_1d(reference_probabilities, "reference_probabilities")
+    names = tuple(str(name) for name in architecture_names)
+    sample_count, architecture_count = probabilities.shape
+
+    if len(labels_array) != sample_count or len(reference) != sample_count:
+        raise ValueError("Labels/reference probabilities do not match probability rows.")
+    if len(names) != architecture_count or len(set(names)) != architecture_count:
+        raise ValueError("architecture_names must uniquely match probability columns.")
+    if not np.isin(labels_array, [0.0, 1.0]).all():
+        raise ValueError("Sensitivity-constrained selection requires labels 0/1.")
+    if ((reference < 0.0) | (reference > 1.0)).any():
+        raise ValueError("reference_probabilities must lie in [0, 1].")
+    if not 0.0 < reference_threshold < 1.0:
+        raise ValueError("reference_threshold must lie strictly between 0 and 1.")
+    if sensitivity_margin < 0.0 or sensitivity_margin >= 1.0:
+        raise ValueError("sensitivity_margin must lie in [0, 1).")
+    if min_members < 1 or min_members > architecture_count:
+        raise ValueError("min_members must be between 1 and the candidate count.")
+    if max_members is None:
+        max_members = architecture_count
+    max_members = min(int(max_members), architecture_count)
+    if max_members < min_members:
+        raise ValueError("max_members must be at least min_members.")
+
+    reference_sensitivity, _ = _sensitivity_specificity(
+        labels_array, reference >= reference_threshold
+    )
+    sensitivity_floor = max(0.0, reference_sensitivity - sensitivity_margin)
+    positive = labels_array == 1.0
+    best: tuple[tuple[float, float, float, int], tuple[int, ...], float] | None = None
+    evaluated = 0
+    for member_count in range(min_members, max_members + 1):
+        for indices in combinations(range(architecture_count), member_count):
+            evaluated += 1
+            ensemble_probability = probabilities[:, indices].mean(axis=1)
+            candidate_threshold = _highest_threshold_at_sensitivity(
+                ensemble_probability[positive], sensitivity_floor
+            )
+            predictions = ensemble_probability >= candidate_threshold
+            sensitivity, specificity = _sensitivity_specificity(
+                labels_array, predictions
+            )
+            if sensitivity + 1e-12 < sensitivity_floor:
+                continue
+            balanced_accuracy = (sensitivity + specificity) / 2.0
+            # Specificity is the improvement target after sensitivity is locked.
+            # Then prefer BAcc, sensitivity, and a smaller subset in that order.
+            objective = (
+                specificity,
+                balanced_accuracy,
+                sensitivity,
+                -member_count,
+            )
+            if best is None or objective > best[0]:
+                best = (objective, indices, candidate_threshold)
+
+    if best is None:
+        raise ValueError("No architecture subset satisfied the sensitivity floor.")
+    _, selected_indices, selected_threshold = best
+    selected_probability = probabilities[:, selected_indices].mean(axis=1)
+    sensitivity, specificity = _sensitivity_specificity(
+        labels_array, selected_probability >= selected_threshold
+    )
+    return SensitivityConstrainedSelection(
+        candidate_names=names,
+        selected_names=tuple(names[index] for index in selected_indices),
+        reference_sensitivity=float(reference_sensitivity),
+        sensitivity_floor=float(sensitivity_floor),
+        cross_validated_balanced_accuracy=float((sensitivity + specificity) / 2.0),
+        cross_validated_sensitivity=float(sensitivity),
+        cross_validated_specificity=float(specificity),
+        classification_threshold=float(selected_threshold),
+        min_members=int(min_members),
+        max_members=int(max_members),
+        evaluated_subsets=int(evaluated),
     )
 
 

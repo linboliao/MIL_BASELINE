@@ -34,11 +34,15 @@ from ensemble.spe import (
     architecture_disagreement,
     class_patient_equal_sample_weights,
     fit_architecture_weights,
+    fit_constrained_linear_stacking,
     patient_equal_sample_weights,
     residual_similarity_matrix,
     select_architectures,
     select_architectures_for_balanced_accuracy,
+    select_diversity_veto,
+    select_sensitivity_constrained_subset,
 )
+from ensemble.ra_spe import fit_ra_spe, predict_ra_spe, ra_spe_checkpoint
 from utils.model_utils import get_model_from_yaml
 from utils.wsi_utils import WSI_Dataset
 from utils.yaml_utils import read_yaml
@@ -473,7 +477,14 @@ def merge_architecture_oof(
     for name in names:
         frame = oof_by_architecture[name]
         columns = ["slide_id", "patient_id", "label", "fold", "prob_1"]
-        renamed = frame[columns].rename(columns={"prob_1": f"prob_{name}"})
+        if "state_variance" in frame.columns:
+            columns.append("state_variance")
+        renamed = frame[columns].rename(
+            columns={
+                "prob_1": f"prob_{name}",
+                "state_variance": f"state_variance_{name}",
+            }
+        )
         merged = merged.merge(
             renamed,
             on=["slide_id", "patient_id", "label", "fold"],
@@ -484,6 +495,47 @@ def merge_architecture_oof(
     if len(merged) != expected or any(len(frame) != expected for frame in oof_by_architecture.values()):
         raise ValueError("Architectures do not cover the same OOF development slides.")
     return merged.sort_values(["fold", "slide_id"]).reset_index(drop=True)
+
+
+def recover_cached_oof_state_variances(
+    oof: pd.DataFrame,
+    refit_source: Path,
+    architecture_names: list[str],
+    run_manifest: dict[str, Any],
+) -> pd.DataFrame:
+    """Recover reliability features omitted by older merged OOF CSV schemas."""
+    recovered = oof.copy()
+    for name in architecture_names:
+        destination = f"state_variance_{name}"
+        if destination in recovered.columns:
+            continue
+        architecture_root = refit_source / "member_predictions" / name
+        candidates = list(architecture_root.glob("*/oof_predictions.csv"))
+        training_run = run_manifest.get(name, {}).get("training_run")
+        if training_run:
+            run_name = Path(str(training_run)).name
+            candidates = [path for path in candidates if path.parent.name == run_name]
+        if len(candidates) != 1:
+            continue
+        member = pd.read_csv(
+            candidates[0],
+            dtype={"slide_id": "string", "patient_id": "string"},
+        )
+        required = {"slide_id", "patient_id", "label", "fold", "state_variance"}
+        if not required.issubset(member.columns):
+            continue
+        reliability = member[list(required)].rename(
+            columns={"state_variance": destination}
+        )
+        recovered = recovered.merge(
+            reliability,
+            on=["slide_id", "patient_id", "label", "fold"],
+            how="left",
+            validate="one_to_one",
+        )
+        if recovered[destination].isna().any():
+            raise ValueError(f"Could not align cached OOF state variance for {name}.")
+    return recovered
 
 
 def architecture_test_prediction(fold_frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -814,6 +866,9 @@ def main() -> None:
             run_manifest = source_manifest.get("architectures", {})
         else:
             run_manifest = {}
+        oof = recover_cached_oof_state_variances(
+            oof, refit_source, names, run_manifest
+        )
         devices: list[str] = []
         print(f"Refitting cached architecture predictions from {refit_source}")
     else:
@@ -872,11 +927,102 @@ def main() -> None:
             f"OOF predictions are missing columns: {sorted(missing_oof_columns)}"
         )
     probability_matrix = oof[probability_columns].to_numpy(dtype=np.float64)
+    if oof.groupby(oof["patient_id"].astype(str))["fold"].nunique().max() > 1:
+        raise ValueError("A patient cannot occur in more than one OOF fold.")
     weighting = settings.get("weighting", {})
+    aggregation = settings.get("aggregation", {})
+    aggregation_strategy = str(aggregation.get("strategy", "weighted_mean"))
+    decision_threshold = threshold
     selection_settings = settings.get("selection", {})
     selection = None
+    reference_selection = None
+    reference_fit = None
     selected_names = list(names)
-    if bool(selection_settings.get("enabled", False)):
+    fit = None
+    ra_fit = None
+    ra_model = None
+    ra_oof_weights = None
+    linear_crossfit_weights = None
+    linear_oof_weight_matrix = None
+    if aggregation_strategy == "diversity_veto":
+        selection = select_diversity_veto(
+            probability_matrix,
+            labels=oof["label"].to_numpy(),
+            patient_ids=oof["patient_id"].astype(str).to_numpy(),
+            architecture_names=names,
+            classification_threshold=threshold,
+            max_veto_bacc_gap=float(aggregation.get("max_veto_bacc_gap", 0.03)),
+        )
+        selected_names = list(selection.selected_names)
+        print(
+            "Selected diversity veto: "
+            f"anchor={selection.anchor_name}, veto={selection.veto_name}"
+        )
+    elif aggregation_strategy == "sensitivity_constrained_subset":
+        reference_settings = aggregation.get("reference_selection", {})
+        reference_selection = select_architectures_for_balanced_accuracy(
+            probability_matrix,
+            labels=oof["label"].to_numpy(),
+            patient_ids=oof["patient_id"].astype(str).to_numpy(),
+            fold_ids=oof["fold"].to_numpy(),
+            architecture_names=names,
+            diversity_lambda=float(weighting.get("diversity_lambda", 0.05)),
+            classification_threshold=threshold,
+            min_members=int(reference_settings.get("min_members", 2)),
+            max_members=int(reference_settings.get("max_members", 6)),
+            min_cv_improvement=float(
+                reference_settings.get("min_cv_improvement", 0.001)
+            ),
+            max_individual_bacc_gap=float(
+                reference_settings.get("max_individual_bacc_gap", 0.10)
+            ),
+            max_iterations=int(weighting.get("max_iterations", 5000)),
+            tolerance=float(weighting.get("tolerance", 1e-10)),
+        )
+        reference_names = list(reference_selection.selected_names)
+        reference_indices = np.asarray(
+            [names.index(name) for name in reference_names], dtype=int
+        )
+        reference_fit, _ = fit_architecture_weights(
+            probability_matrix[:, reference_indices],
+            labels=oof["label"].to_numpy(),
+            patient_ids=oof["patient_id"].astype(str).to_numpy(),
+            architecture_names=reference_names,
+            diversity_lambda=float(weighting.get("diversity_lambda", 0.05)),
+            max_iterations=int(weighting.get("max_iterations", 5000)),
+            tolerance=float(weighting.get("tolerance", 1e-10)),
+            class_balance=True,
+        )
+        reference_probability = probability_matrix[:, reference_indices] @ np.asarray(
+            reference_fit.weights, dtype=np.float64
+        )
+        selection = select_sensitivity_constrained_subset(
+            probability_matrix,
+            labels=oof["label"].to_numpy(),
+            architecture_names=names,
+            reference_probabilities=reference_probability,
+            reference_threshold=threshold,
+            sensitivity_margin=float(aggregation.get("sensitivity_margin", 0.0)),
+            min_members=int(aggregation.get("min_members", 1)),
+            max_members=int(aggregation.get("max_members", 8)),
+        )
+        selected_names = list(selection.selected_names)
+        decision_threshold = float(selection.classification_threshold)
+        print(
+            "Selected sensitivity-constrained subset: "
+            f"members={selected_names}, threshold={decision_threshold:.8f}, "
+            f"OOF sensitivity={selection.cross_validated_sensitivity:.6f}, "
+            f"specificity={selection.cross_validated_specificity:.6f}"
+        )
+    elif aggregation_strategy not in {
+        "weighted_mean",
+        "constrained_linear_stacking",
+        "ra_spe",
+    }:
+        raise ValueError(f"Unknown aggregation.strategy={aggregation_strategy!r}.")
+    elif aggregation_strategy == "weighted_mean" and bool(
+        selection_settings.get("enabled", False)
+    ):
         max_members_value = selection_settings.get("max_members")
         selection_objective = str(
             selection_settings.get("objective", "patient_equal_log_loss")
@@ -929,25 +1075,170 @@ def main() -> None:
         [names.index(name) for name in selected_names], dtype=int
     )
     selected_probability_matrix = probability_matrix[:, selected_indices]
-    fit, _ = fit_architecture_weights(
-        selected_probability_matrix,
-        labels=oof["label"].to_numpy(),
-        patient_ids=oof["patient_id"].astype(str).to_numpy(),
-        architecture_names=selected_names,
-        diversity_lambda=float(weighting.get("diversity_lambda", 0.05)),
-        max_iterations=int(weighting.get("max_iterations", 5000)),
-        tolerance=float(weighting.get("tolerance", 1e-10)),
-        class_balance=bool(weighting.get("class_balance", False)),
-    )
     architecture_weights = np.zeros(len(names), dtype=np.float64)
-    architecture_weights[selected_indices] = np.asarray(
-        fit.weights, dtype=np.float64
-    )
-    oof["spe_prob_1"] = probability_matrix @ architecture_weights
-    oof["spe_prediction"] = (oof["spe_prob_1"] >= threshold).astype(int)
-    oof["architecture_disagreement"] = architecture_disagreement(
-        probability_matrix, architecture_weights
-    )
+    if aggregation_strategy == "diversity_veto":
+        architecture_weights[selected_indices] = 0.5
+        oof["spe_prob_1"] = selected_probability_matrix.min(axis=1)
+    elif aggregation_strategy == "sensitivity_constrained_subset":
+        architecture_weights[selected_indices] = 1.0 / len(selected_indices)
+        oof["spe_prob_1"] = selected_probability_matrix.mean(axis=1)
+    elif aggregation_strategy == "constrained_linear_stacking":
+        if bool(selection_settings.get("enabled", False)):
+            raise ValueError(
+                "constrained_linear_stacking retains all architectures; "
+                "set selection.enabled=false."
+            )
+        linear_max_weight = float(
+            weighting.get(
+                "max_weight",
+                float(weighting.get("max_weight_multiplier", 2.0)) / len(names),
+            )
+        )
+        linear_min_effective = float(
+            weighting.get(
+                "min_effective_members",
+                float(weighting.get("min_effective_fraction", 0.5)) * len(names),
+            )
+        )
+        fit, _ = fit_constrained_linear_stacking(
+            probability_matrix,
+            labels=oof["label"].to_numpy(),
+            patient_ids=oof["patient_id"].astype(str).to_numpy(),
+            architecture_names=names,
+            diversity_lambda=float(weighting.get("diversity_lambda", 0.02)),
+            shrinkage_lambda=float(weighting.get("shrinkage_lambda", 0.10)),
+            max_weight=linear_max_weight,
+            min_effective_members=linear_min_effective,
+            max_iterations=int(weighting.get("max_iterations", 5000)),
+            tolerance=float(weighting.get("tolerance", 1e-10)),
+            class_balance=bool(weighting.get("class_balance", True)),
+        )
+        architecture_weights[:] = np.asarray(fit.weights, dtype=np.float64)
+        fold_values = np.unique(oof["fold"].to_numpy())
+        cross_fitted_probability = np.empty(len(oof), dtype=np.float64)
+        linear_oof_weight_matrix = np.empty_like(probability_matrix)
+        linear_crossfit_weights = {}
+        for held_out_fold in fold_values:
+            train_mask = oof["fold"].to_numpy() != held_out_fold
+            held_out_mask = ~train_mask
+            fold_fit, _ = fit_constrained_linear_stacking(
+                probability_matrix[train_mask],
+                labels=oof.loc[train_mask, "label"].to_numpy(),
+                patient_ids=oof.loc[train_mask, "patient_id"].astype(str).to_numpy(),
+                architecture_names=names,
+                diversity_lambda=float(weighting.get("diversity_lambda", 0.02)),
+                shrinkage_lambda=float(weighting.get("shrinkage_lambda", 0.10)),
+                max_weight=linear_max_weight,
+                min_effective_members=linear_min_effective,
+                max_iterations=int(weighting.get("max_iterations", 5000)),
+                tolerance=float(weighting.get("tolerance", 1e-10)),
+                class_balance=bool(weighting.get("class_balance", True)),
+            )
+            fold_weights = np.asarray(fold_fit.weights, dtype=np.float64)
+            cross_fitted_probability[held_out_mask] = (
+                probability_matrix[held_out_mask] @ fold_weights
+            )
+            linear_oof_weight_matrix[held_out_mask] = fold_weights
+            linear_crossfit_weights[str(held_out_fold)] = fold_fit.as_dict()
+        oof["spe_prob_1"] = cross_fitted_probability
+        print(
+            "Fitted constrained linear stacking: "
+            f"effective_members={fit.effective_members:.3f}, "
+            f"max_weight={max(fit.weights):.4f}"
+        )
+    elif aggregation_strategy == "ra_spe":
+        if bool(selection_settings.get("enabled", False)):
+            raise ValueError("ra_spe retains all architectures; set selection.enabled=false.")
+        state_columns = [f"state_variance_{name}" for name in names]
+        requested_state_variance = bool(aggregation.get("use_state_variance", True))
+        oof_state_variances = None
+        if requested_state_variance and set(state_columns).issubset(oof.columns):
+            oof_state_variances = oof[state_columns].to_numpy(dtype=np.float64)
+        elif requested_state_variance:
+            print(
+                "WARNING: cached OOF predictions have no per-architecture state "
+                "variance; RA-SPE will use probability/entropy/disagreement features only."
+            )
+        ra_fit, ra_model, cross_fitted_probability, ra_oof_weights = fit_ra_spe(
+            probability_matrix,
+            labels=oof["label"].to_numpy(),
+            patient_ids=oof["patient_id"].astype(str).to_numpy(),
+            fold_ids=oof["fold"].to_numpy(),
+            architecture_names=names,
+            state_variances=oof_state_variances,
+            hidden_dim=int(aggregation.get("hidden_dim", 16)),
+            epochs=int(aggregation.get("epochs", 300)),
+            learning_rate=float(aggregation.get("learning_rate", 0.002)),
+            weight_decay=float(aggregation.get("weight_decay", 0.001)),
+            member_dropout=float(aggregation.get("member_dropout", 0.20)),
+            uniform_kl_lambda=float(aggregation.get("uniform_kl_lambda", 0.05)),
+            consistency_lambda=float(aggregation.get("consistency_lambda", 0.10)),
+            group_dro_temperature=float(
+                aggregation.get("group_dro_temperature", 0.10)
+            ),
+            max_weight=float(
+                aggregation.get(
+                    "max_weight",
+                    min(
+                        1.0,
+                        float(aggregation.get("max_weight_multiplier", 2.5))
+                        / len(names),
+                    ),
+                )
+            ),
+            class_balance=bool(weighting.get("class_balance", True)),
+            seed=int(aggregation.get("seed", 2026)),
+        )
+        # These are meta-level cross-fitted predictions, not predictions from
+        # the final aggregator fitted on all OOF rows.
+        oof["spe_prob_1"] = cross_fitted_probability
+        architecture_weights[:] = ra_oof_weights.mean(axis=0)
+        for index, name in enumerate(names):
+            oof[f"ra_weight_{name}"] = ra_oof_weights[:, index]
+        print(
+            "Fitted RA-SPE: "
+            f"cross-fitted BAcc={ra_fit.cross_fitted_balanced_accuracy:.6f}, "
+            f"sensitivity={ra_fit.cross_fitted_sensitivity:.6f}, "
+            f"specificity={ra_fit.cross_fitted_specificity:.6f}"
+        )
+    else:
+        fit, _ = fit_architecture_weights(
+            selected_probability_matrix,
+            labels=oof["label"].to_numpy(),
+            patient_ids=oof["patient_id"].astype(str).to_numpy(),
+            architecture_names=selected_names,
+            diversity_lambda=float(weighting.get("diversity_lambda", 0.05)),
+            max_iterations=int(weighting.get("max_iterations", 5000)),
+            tolerance=float(weighting.get("tolerance", 1e-10)),
+            class_balance=bool(weighting.get("class_balance", False)),
+        )
+        architecture_weights[selected_indices] = np.asarray(
+            fit.weights, dtype=np.float64
+        )
+        oof["spe_prob_1"] = probability_matrix @ architecture_weights
+    oof["spe_prediction"] = (
+        oof["spe_prob_1"] >= decision_threshold
+    ).astype(int)
+    if aggregation_strategy == "ra_spe":
+        oof["architecture_disagreement"] = np.sqrt(
+            np.sum(
+                ra_oof_weights
+                * (probability_matrix - oof["spe_prob_1"].to_numpy()[:, None]) ** 2,
+                axis=1,
+            )
+        )
+    elif linear_oof_weight_matrix is not None:
+        oof["architecture_disagreement"] = np.sqrt(
+            np.sum(
+                linear_oof_weight_matrix
+                * (probability_matrix - oof["spe_prob_1"].to_numpy()[:, None]) ** 2,
+                axis=1,
+            )
+        )
+    else:
+        oof["architecture_disagreement"] = architecture_disagreement(
+            probability_matrix, architecture_weights
+        )
     atomic_csv(oof, output_root / "oof_architecture_predictions.csv")
 
     patient_ids = oof["patient_id"].astype(str).to_numpy()
@@ -978,6 +1269,21 @@ def main() -> None:
                 "architecture": name,
                 "selected": name in selected_names,
                 "weight": architecture_weights[index],
+                "weight_std": (
+                    float(ra_oof_weights[:, index].std())
+                    if ra_oof_weights is not None
+                    else 0.0
+                ),
+                "weight_min": (
+                    float(ra_oof_weights[:, index].min())
+                    if ra_oof_weights is not None
+                    else architecture_weights[index]
+                ),
+                "weight_max": (
+                    float(ra_oof_weights[:, index].max())
+                    if ra_oof_weights is not None
+                    else architecture_weights[index]
+                ),
                 "patient_equal_oof_log_loss": float(log_loss),
                 "mean_residual_similarity_to_others": float(
                     np.delete(similarity[index], index).mean()
@@ -1003,14 +1309,45 @@ def main() -> None:
     state_variances = test_base[state_variance_columns].to_numpy(dtype=np.float64)
     fold_variances = test_base[fold_variance_columns].to_numpy(dtype=np.float64)
     final = test_base[["slide_id", "patient_id", "type", "label"]].copy()
-    final["prob_1"] = test_matrix @ architecture_weights
+    test_ra_weights = None
+    if aggregation_strategy == "diversity_veto":
+        final["prob_1"] = test_matrix[:, selected_indices].min(axis=1)
+    elif aggregation_strategy == "sensitivity_constrained_subset":
+        final["prob_1"] = test_matrix[:, selected_indices].mean(axis=1)
+    elif aggregation_strategy == "ra_spe":
+        if ra_model is None or ra_fit is None:
+            raise AssertionError("RA-SPE model was not fitted.")
+        test_ra_state_variances = state_variances if ra_fit.state_variance_used else None
+        test_ra_probability, test_ra_weights = predict_ra_spe(
+            ra_model, test_matrix, test_ra_state_variances
+        )
+        final["prob_1"] = test_ra_probability
+        for index, name in enumerate(names):
+            final[f"weight_{name}"] = test_ra_weights[:, index]
+    else:
+        final["prob_1"] = test_matrix @ architecture_weights
     final["prob_0"] = 1.0 - final["prob_1"]
-    final["prediction"] = (final["prob_1"] >= threshold).astype(int)
-    final["state_disagreement"] = np.sqrt(state_variances @ architecture_weights)
-    final["fold_disagreement"] = np.sqrt(fold_variances @ architecture_weights)
-    final["architecture_disagreement"] = architecture_disagreement(
-        test_matrix, architecture_weights
-    )
+    final["prediction"] = (final["prob_1"] >= decision_threshold).astype(int)
+    if test_ra_weights is not None:
+        final["state_disagreement"] = np.sqrt(
+            np.sum(state_variances * test_ra_weights, axis=1)
+        )
+        final["fold_disagreement"] = np.sqrt(
+            np.sum(fold_variances * test_ra_weights, axis=1)
+        )
+        final["architecture_disagreement"] = np.sqrt(
+            np.sum(
+                test_ra_weights
+                * (test_matrix - final["prob_1"].to_numpy()[:, None]) ** 2,
+                axis=1,
+            )
+        )
+    else:
+        final["state_disagreement"] = np.sqrt(state_variances @ architecture_weights)
+        final["fold_disagreement"] = np.sqrt(fold_variances @ architecture_weights)
+        final["architecture_disagreement"] = architecture_disagreement(
+            test_matrix, architecture_weights
+        )
     final["equal_weight_prob_1"] = test_matrix.mean(axis=1)
     final["equal_weight_prediction"] = (
         final["equal_weight_prob_1"] >= threshold
@@ -1019,6 +1356,11 @@ def main() -> None:
         (test_matrix >= threshold).sum(axis=1) >= (len(names) // 2 + 1)
     ).astype(int)
     atomic_csv(final, output_root / "spe_predictions.csv")
+    if ra_model is not None and ra_fit is not None:
+        checkpoint_path = output_root / "ra_spe_aggregator.pt"
+        temporary_checkpoint = checkpoint_path.with_suffix(".pt.tmp")
+        torch.save(ra_spe_checkpoint(ra_fit, ra_model), temporary_checkpoint)
+        temporary_checkpoint.replace(checkpoint_path)
 
     config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
     manifest = {
@@ -1031,12 +1373,30 @@ def main() -> None:
         ],
         "spe_config": str(config_path),
         "spe_config_sha256": config_hash,
-        "development_only_weight_fit": True,
+        "development_only_weight_fit": aggregation_strategy in {
+            "weighted_mean",
+            "constrained_linear_stacking",
+            "ra_spe",
+        },
         "independent_test_labels_used_for_fit": False,
         "refit_from": None if refit_source is None else str(refit_source),
-        "classification_threshold": threshold,
+        "configured_classification_threshold": threshold,
+        "classification_threshold": decision_threshold,
         "checkpoint_selection": checkpoint_selection,
         "inference_devices": devices,
+        "aggregation": {
+            "strategy": aggregation_strategy,
+            "selected_names": selected_names,
+            "classification_threshold": decision_threshold,
+            "reference_selection": (
+                None if reference_selection is None else reference_selection.as_dict()
+            ),
+            "reference_weight_fit": (
+                None if reference_fit is None else reference_fit.as_dict()
+            ),
+            "ra_spe_fit": None if ra_fit is None else ra_fit.as_dict(),
+            "linear_crossfit_weights": linear_crossfit_weights,
+        },
         "architecture_selection": (
             selection.as_dict()
             if selection is not None
@@ -1045,7 +1405,7 @@ def main() -> None:
                 "selected_names": names,
             }
         ),
-        "weight_fit": fit.as_dict(),
+        "weight_fit": None if fit is None else fit.as_dict(),
         "architectures": run_manifest,
         "outputs": {
             "oof": str(output_root / "oof_architecture_predictions.csv"),
@@ -1053,6 +1413,11 @@ def main() -> None:
             "residual_similarity": str(output_root / "residual_similarity.csv"),
             "architecture_test": str(output_root / "architecture_test_predictions.csv"),
             "spe_predictions": str(output_root / "spe_predictions.csv"),
+            "ra_spe_checkpoint": (
+                None
+                if ra_model is None
+                else str(output_root / "ra_spe_aggregator.pt")
+            ),
         },
     }
     atomic_json(manifest, output_root / "manifest.json")

@@ -1,0 +1,48 @@
+experiment:
+  name: v6_constrained_linear_stacking
+  device: cuda:0
+  num_workers: 0
+  preload: false
+  classification_threshold: 0.5
+  development_dataset_root: datasets/Diagnosis/Stains/Reinhard
+  independent_test_dataset_root: datasets/Diagnosis/MIL
+  output_root: result/Diagnosis/SPE
+
+checkpoint_selection:
+  strategy: high_performance_band
+  metric: bacc
+  metric_tolerance: 0.005
+  max_checkpoints: 5
+
+aggregation:
+  strategy: constrained_linear_stacking
+
+weighting:
+  class_balance: true
+  diversity_lambda: 0.02
+  shrinkage_lambda: 0.10
+  # These scale automatically if the paper's architecture set changes.
+  max_weight_multiplier: 2.0
+  min_effective_fraction: 0.5
+  max_iterations: 5000
+  tolerance: 1.0e-10
+
+# This method regularizes weights instead of selecting a cohort-specific subset.
+selection:
+  enabled: false
+
+architectures:
+  - {name: AB_MIL, config: configs/Diagnosis/MIL/AB_MIL.yaml, run_dir: null}
+  - {name: CLAM_SB_MIL, config: configs/Diagnosis/MIL/CLAM_SB_MIL.yaml, run_dir: null}
+  - {name: CLAM_MB_MIL, config: configs/Diagnosis/MIL/CLAM_MB_MIL.yaml, run_dir: null}
+  - {name: TRANS_MIL, config: configs/Diagnosis/MIL/TRANS_MIL.yaml, run_dir: null}
+  - {name: WIKG_MIL, config: configs/Diagnosis/MIL/WIKG_MIL.yaml, run_dir: null}
+  - {name: MAMBA2D_MIL, config: configs/Diagnosis/MIL/MAMBA2D_MIL.yaml, run_dir: null}
+  - {name: AEM_MIL, config: configs/Diagnosis/MIL/AEM_MIL.yaml, run_dir: null}
+  - {name: MICO_MIL, config: configs/Diagnosis/MIL/MICO_MIL.yaml, run_dir: null}
+  - {name: MSM_MIL, config: configs/Diagnosis/MIL/MSM_MIL.yaml, run_dir: null}
+  - {name: TDA_MIL, config: configs/Diagnosis/MIL/TDA_MIL.yaml, run_dir: null}
+  - {name: GDF_MIL, config: configs/Diagnosis/MIL/GDF_MIL.yaml, run_dir: null}
+  - {name: RRT_MIL, config: configs/Diagnosis/MIL/RRT_MIL.yaml, run_dir: null}
+  - {name: DS_MIL, config: configs/Diagnosis/MIL/DS_MIL.yaml, run_dir: null}
+  - {name: DTFD_MIL, config: configs/Diagnosis/MIL/DTFD_MIL.yaml, run_dir: null}

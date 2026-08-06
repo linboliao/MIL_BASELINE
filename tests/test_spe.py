@@ -13,17 +13,22 @@ from ensemble.spe import (
     architecture_disagreement,
     class_patient_equal_sample_weights,
     fit_architecture_weights,
+    fit_constrained_linear_stacking,
     patient_equal_sample_weights,
     residual_similarity_matrix,
     select_architectures,
     select_architectures_for_balanced_accuracy,
+    select_diversity_veto,
+    select_sensitivity_constrained_subset,
 )
+from ensemble.ra_spe import fit_ra_spe, predict_ra_spe
 from scripts.Diagnosis.spe.run import (
     architecture_test_prediction,
     configured_devices,
     dtfd_positive_probability,
     merge_architecture_test_predictions,
     prepare_inference_model,
+    recover_cached_oof_state_variances,
     selected_checkpoints,
     trajectory_predictions,
 )
@@ -95,6 +100,86 @@ class TestSPE(unittest.TestCase):
         self.assertTrue(np.allclose(similarity, similarity.T))
         self.assertTrue(np.allclose(np.diag(similarity), 1.0))
 
+    def test_constrained_stacking_respects_concentration_limits(self):
+        labels = np.tile([0, 1], 20)
+        patients = np.array([f"p{index}" for index in range(len(labels))])
+        good = np.where(labels == 1, 0.9, 0.1)
+        matrix = np.column_stack(
+            [good, 0.5 * good + 0.25, 0.45 + 0.1 * good, 1.0 - good]
+        )
+        fit, _ = fit_constrained_linear_stacking(
+            matrix,
+            labels,
+            patients,
+            architecture_names=["a", "b", "c", "d"],
+            max_weight=0.4,
+            min_effective_members=3.0,
+        )
+        weights = np.asarray(fit.weights)
+        self.assertTrue(fit.converged)
+        self.assertAlmostEqual(float(weights.sum()), 1.0, places=7)
+        self.assertLessEqual(float(weights.max()), 0.4 + 1e-7)
+        self.assertGreaterEqual(fit.effective_members, 3.0 - 1e-6)
+        self.assertGreater(weights[0], weights[3])
+
+    def test_ra_spe_cross_fits_and_bounds_dynamic_weights(self):
+        labels = np.tile([0, 1], 15)
+        patients = np.array([f"p{index}" for index in range(len(labels))])
+        folds = np.repeat(np.arange(1, 6), 6)
+        good = np.where(labels == 1, 0.85, 0.15)
+        matrix = np.column_stack(
+            [good, np.clip(good + 0.05, 0, 1), 0.55 - 0.1 * labels, 1.0 - good]
+        )
+        state_variance = np.full_like(matrix, 0.01)
+        fit, model, oof_probability, oof_weights = fit_ra_spe(
+            matrix,
+            labels,
+            patients,
+            folds,
+            architecture_names=["a", "b", "c", "d"],
+            state_variances=state_variance,
+            hidden_dim=8,
+            epochs=15,
+            max_weight=0.4,
+            seed=7,
+        )
+        test_probability, test_weights = predict_ra_spe(
+            model, matrix, state_variance
+        )
+        self.assertEqual(oof_probability.shape, (len(labels),))
+        self.assertEqual(oof_weights.shape, matrix.shape)
+        self.assertTrue(np.isfinite(test_probability).all())
+        np.testing.assert_allclose(test_weights.sum(axis=1), 1.0, atol=1e-6)
+        self.assertLessEqual(float(test_weights.max()), 0.4 + 1e-6)
+        self.assertTrue(fit.state_variance_used)
+
+    def test_recovers_state_variance_from_legacy_refit_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            member_root = root / "member_predictions" / "a" / "run_1"
+            member_root.mkdir(parents=True)
+            base = pd.DataFrame(
+                {
+                    "slide_id": ["s1", "s2"],
+                    "patient_id": ["p1", "p2"],
+                    "label": [0, 1],
+                    "fold": [1, 2],
+                    "prob_a": [0.1, 0.9],
+                }
+            )
+            member = base.rename(columns={"prob_a": "prob_1"})
+            member["state_variance"] = [0.01, 0.02]
+            member.to_csv(member_root / "oof_predictions.csv", index=False)
+            recovered = recover_cached_oof_state_variances(
+                base,
+                root,
+                ["a"],
+                {"a": {"training_run": "some/path/run_1"}},
+            )
+            np.testing.assert_allclose(
+                recovered["state_variance_a"], [0.01, 0.02]
+            )
+
     def test_residual_similarity_and_disagreement(self):
         probabilities = np.array([[0.1, 0.1], [0.9, 0.7], [0.4, 0.6]])
         labels = np.array([0, 1, 1])
@@ -147,6 +232,45 @@ class TestSPE(unittest.TestCase):
         )
         self.assertEqual(selection.selected_names, ("complement", "good"))
         self.assertNotIn("unsuitable", selection.eligible_names)
+
+    def test_diversity_veto_selects_accurate_anchor_and_complement(self):
+        labels = np.tile([0, 1], 20)
+        patients = np.array([f"p{index}" for index in range(len(labels))])
+        anchor = np.where(labels == 1, 0.9, 0.1).astype(float)
+        similar = np.clip(anchor + np.tile([0.02, -0.02], 20), 0, 1)
+        complement = anchor.copy()
+        complement[[0, 10, 21, 31]] = 1.0 - complement[[0, 10, 21, 31]]
+        selection = select_diversity_veto(
+            np.column_stack([anchor, similar, complement]),
+            labels,
+            patients,
+            ["anchor", "similar", "complement"],
+            max_veto_bacc_gap=0.10,
+        )
+        self.assertEqual(selection.anchor_name, "anchor")
+        self.assertEqual(selection.veto_name, "complement")
+        self.assertEqual(selection.selected_names, ("anchor", "complement"))
+
+    def test_sensitivity_constrained_subset_respects_reference(self):
+        labels = np.tile([0, 1], 20)
+        reference = np.where(labels == 1, 0.8, 0.2).astype(float)
+        reference[[1, 3]] = 0.4
+        noisy = np.where(labels == 1, 0.9, 0.45).astype(float)
+        specific = np.where(labels == 1, 0.7, 0.1).astype(float)
+        selection = select_sensitivity_constrained_subset(
+            np.column_stack([noisy, specific]),
+            labels,
+            ["noisy", "specific"],
+            reference,
+            min_members=1,
+            max_members=2,
+        )
+        self.assertGreaterEqual(
+            selection.cross_validated_sensitivity,
+            selection.reference_sensitivity,
+        )
+        self.assertGreaterEqual(selection.cross_validated_specificity, 0.95)
+        self.assertTrue(0.0 < selection.classification_threshold < 1.0)
 
     def test_high_performance_checkpoint_band(self):
         with tempfile.TemporaryDirectory() as directory:
