@@ -264,21 +264,35 @@ def main() -> None:
             "prediction_csv": str(prediction_output),
         }
 
-    summary = pd.DataFrame(summary_rows).sort_values(
+    summary_path = output_root / "model_metrics.csv"
+    summary = pd.DataFrame(summary_rows)
+    if summary_path.is_file():
+        previous = pd.read_csv(summary_path)
+        replaced_models = set(summary["model"].astype(str))
+        previous = previous.loc[~previous["model"].astype(str).isin(replaced_models)]
+        summary = pd.concat([previous, summary], ignore_index=True)
+    summary = summary.sort_values(
         ["balanced_accuracy", "roc_auc"], ascending=False
     )
-    atomic_csv(summary, output_root / "model_metrics.csv")
+    atomic_csv(summary, summary_path)
+    manifest_path = output_root / "manifest.json"
+    existing_models = {}
+    if manifest_path.is_file():
+        existing_models = json.loads(
+            manifest_path.read_text(encoding="utf-8")
+        ).get("models", {})
+    existing_models.update(manifests)
     atomic_json(
         {
             "target": args.target_name,
             "test_dataset_csvs": {str(fold): str(path) for fold, path in test_folds.items()},
             "threshold": args.threshold,
-            "models": manifests,
-            "summary_csv": str(output_root / "model_metrics.csv"),
+            "models": existing_models,
+            "summary_csv": str(summary_path),
         },
-        output_root / "manifest.json",
+        manifest_path,
     )
-    print(f"All best-checkpoint model tests complete: {output_root / 'model_metrics.csv'}")
+    print(f"Best-checkpoint model test complete: {summary_path}")
 
 
 if __name__ == "__main__":

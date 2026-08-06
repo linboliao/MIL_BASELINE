@@ -59,18 +59,11 @@ five configured SPE variants, and writes performance summaries:
 bash scripts/Diagnosis/spe/run_all.sh
 ```
 
-Stages and cohorts are selectable without editing the script:
-
-```bash
-# Do not retrain; test models and all SPE variants on the external cohort only.
-STAGES=test,spe TARGETS=external \
-  TEST_GPU=0 SPE_VISIBLE_GPUS=0,1,2,3 \
-  SPE_DEVICES=cuda:0,cuda:1,cuda:2,cuda:3 \
-  bash scripts/Diagnosis/spe/run_all.sh
-
-# Training only, sequentially on physical GPU 4.
-STAGES=train TRAIN_GPU=4 bash scripts/Diagnosis/spe/run_all.sh
-```
+`run_all.sh` is intentionally a plain, sequential command list, matching the
+style of `train_mil.sh`: it contains no arrays, loops, functions, stage logic,
+or runtime argument routing. Comment out sections or individual commands when
+only part of the workflow is required, and edit each command's visible GPU ID
+directly when adapting it to another server.
 
 Best-checkpoint model results are stored below
 `result/Diagnosis/ModelTest/{internal,external}/`. SPE versions are stored in
@@ -79,10 +72,11 @@ carry the `_external` suffix. The performance summarizer automatically reads
 the locked decision threshold from each SPE manifest, which is required for
 the sensitivity-constrained version.
 
-The wrapper performs an external/internal patient-overlap audit before any
-test or SPE stage. It stops by default if overlap exists. For diagnostic-only
-reproduction with a knowingly overlapping file, set
-`ALLOW_COHORT_OVERLAP=1`; do not use that override for final paper results.
+The explicit external/internal overlap-audit command appears immediately
+before the external model-test section and stops the remaining commands if an
+overlap is present. Resolve cohort ownership before final paper evaluation;
+adding `--allow-overlap` is suitable only for a knowingly non-paper diagnostic
+run.
 
 ## WSI representation comparison
 
