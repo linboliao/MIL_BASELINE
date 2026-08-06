@@ -49,6 +49,41 @@ python -u scripts/Diagnosis/spe/analyze_tumor_content.py --help
 
 See `configs/Diagnosis/SPE/README.md` for ensemble details.
 
+### Unified training and locked evaluation
+
+The following wrapper trains all 16 configured MIL models, evaluates every
+model's five best checkpoints on the internal and external cohorts, runs all
+five configured SPE variants, and writes performance summaries:
+
+```bash
+bash scripts/Diagnosis/spe/run_all.sh
+```
+
+Stages and cohorts are selectable without editing the script:
+
+```bash
+# Do not retrain; test models and all SPE variants on the external cohort only.
+STAGES=test,spe TARGETS=external \
+  TEST_GPU=0 SPE_VISIBLE_GPUS=0,1,2,3 \
+  SPE_DEVICES=cuda:0,cuda:1,cuda:2,cuda:3 \
+  bash scripts/Diagnosis/spe/run_all.sh
+
+# Training only, sequentially on physical GPU 4.
+STAGES=train TRAIN_GPU=4 bash scripts/Diagnosis/spe/run_all.sh
+```
+
+Best-checkpoint model results are stored below
+`result/Diagnosis/ModelTest/{internal,external}/`. SPE versions are stored in
+their immutable `result/Diagnosis/SPE/v*_.../` directories; external outputs
+carry the `_external` suffix. The performance summarizer automatically reads
+the locked decision threshold from each SPE manifest, which is required for
+the sensitivity-constrained version.
+
+The wrapper performs an external/internal patient-overlap audit before any
+test or SPE stage. It stops by default if overlap exists. For diagnostic-only
+reproduction with a knowingly overlapping file, set
+`ALLOW_COHORT_OVERLAP=1`; do not use that override for final paper results.
+
 ## WSI representation comparison
 
 ### 1. Train

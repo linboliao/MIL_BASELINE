@@ -55,7 +55,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help=(
+            "Decision threshold. By default read classification_threshold from "
+            "the prediction directory's manifest.json, falling back to 0.5."
+        ),
+    )
     parser.add_argument("--bootstrap-iterations", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument(
@@ -314,22 +322,30 @@ def grouped_summary(
 
 def main() -> None:
     args = parse_args()
-    if not 0.0 < args.threshold < 1.0:
+    prediction_path = resolve_path(args.predictions)
+    threshold = args.threshold
+    if threshold is None:
+        manifest_path = prediction_path.parent / "manifest.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            threshold = float(manifest.get("classification_threshold", 0.5))
+        else:
+            threshold = 0.5
+    if not 0.0 < threshold < 1.0:
         raise ValueError("--threshold must lie strictly between 0 and 1.")
     if args.bootstrap_iterations < 1:
         raise ValueError("--bootstrap-iterations must be at least 1.")
-    prediction_path = resolve_path(args.predictions)
     output_dir = resolve_path(args.output_dir)
-    frame = load_predictions(prediction_path, args.threshold)
+    frame = load_predictions(prediction_path, threshold)
 
     overall = grouped_summary(
-        frame, "overall", None, args.threshold, args.bootstrap_iterations, args.seed
+        frame, "overall", None, threshold, args.bootstrap_iterations, args.seed
     )
     specimen = grouped_summary(
         frame,
         "specimen_type",
         "type",
-        args.threshold,
+        threshold,
         args.bootstrap_iterations,
         args.seed + 10_000,
     )
@@ -351,7 +367,7 @@ def main() -> None:
             centered,
             "center",
             "center",
-            args.threshold,
+            threshold,
             args.bootstrap_iterations,
             args.seed + 20_000,
         )
@@ -376,7 +392,7 @@ def main() -> None:
             "bootstrap_unit": "patient",
             "bootstrap_iterations": args.bootstrap_iterations,
             "bootstrap_seed": args.seed,
-            "classification_threshold": args.threshold,
+            "classification_threshold": threshold,
             "n_slides": len(frame),
             "n_patients": frame["patient_id"].nunique(),
             "outputs": {name: str(path) for name, path in outputs.items()},

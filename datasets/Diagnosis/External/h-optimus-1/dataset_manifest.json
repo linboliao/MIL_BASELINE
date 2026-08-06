@@ -1,0 +1,39 @@
+{
+  "version": "diagnosis-external-test-v1",
+  "source_csv": "datasets/Diagnosis/external_test.csv",
+  "output_csv": "datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv",
+  "representation": "h-optimus-1",
+  "feature_dimension": 1536,
+  "magnification": "10x",
+  "stain_normalization": "Reinhard",
+  "rows": 521,
+  "unique_paths": 521,
+  "label_counts": {
+    "0": 254,
+    "1": 267
+  },
+  "specimen_type_counts": {
+    "CNB": 221,
+    "RP": 181,
+    "TURP": 119
+  },
+  "center_counts": {
+    "301": 147,
+    "SL": 238,
+    "YNZL": 136
+  },
+  "reviewed_type_corrections": [
+    "202302334.29.30",
+    "202302334.31",
+    "202302334.32",
+    "202302334.35"
+  ],
+  "feature_path_prefixes": [
+    "/NAS145/liaolinbo/Data/MXB/外部测试/feat/Reinhard/pt_files/h-optimus-1"
+  ],
+  "path_validation": {
+    "current_machine": "not_available",
+    "reason": "CSV paths use the /NAS145 Linux/NAS prefix; this Windows host has no mounted external-test feature directory."
+  },
+  "source_sha256": "cac674b092677584e495414fd228f5cef3ef56af7cff4a823a23ac3969b80023"
+}

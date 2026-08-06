@@ -27,6 +27,7 @@ from scripts.Diagnosis.spe.run import (
     configured_devices,
     dtfd_positive_probability,
     merge_architecture_test_predictions,
+    patient_id_from_slide,
     prepare_inference_model,
     recover_cached_oof_state_variances,
     selected_checkpoints,
@@ -367,6 +368,13 @@ class TestSPE(unittest.TestCase):
         merged = merge_architecture_test_predictions(predictions, ["a", "b"])
         self.assertEqual(merged.shape, (2, 10))
         np.testing.assert_allclose(merged["prob_b"], [0.2, 0.9])
+
+    def test_external_patient_id_conventions(self):
+        self.assertEqual(patient_id_from_slide("B1858553-7"), "B1858553")
+        self.assertEqual(patient_id_from_slide("B1866747-8(1)"), "B1866747")
+        self.assertEqual(patient_id_from_slide("202330145.37"), "202330145")
+        self.assertEqual(patient_id_from_slide("2025-16710-13.14"), "2025-16710")
+        self.assertEqual(patient_id_from_slide("X2025-22069-5"), "X2025-22069")
 
 
 if __name__ == "__main__":

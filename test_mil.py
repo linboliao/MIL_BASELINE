@@ -25,16 +25,19 @@ def test(args):
     if model_name == 'CDP_MIL':
         test_ds = CDP_MIL_WSI_Dataset(test_dataset_csv,yaml_args.Dataset.BeyesGuassian_pt_dir,'test')
     elif model_name == 'LONG_MIL':
-        LONG_MIL_WSI_Dataset(test_dataset_csv,yaml_args.Dataset.h5_csv_path,'test')
-    test_ds = WSI_Dataset(test_dataset_csv,'test')
+        test_ds = LONG_MIL_WSI_Dataset(test_dataset_csv,yaml_args.Dataset.h5_csv_path,'test')
+    else:
+        test_ds = WSI_Dataset(test_dataset_csv,'test')
     test_dataloader = DataLoader(test_ds,batch_size=1,shuffle=False)
     model_weight_path = args.model_weight_path
     print(f"Model weight path: {model_weight_path}")
-    device = torch.device(f'cuda:{yaml_args.General.device}')
+    device = torch.device(args.device or f'cuda:{yaml_args.General.device}')
+    if device.type == 'cuda' and not torch.cuda.is_available():
+        raise RuntimeError(f'CUDA device requested but unavailable: {device}')
     criterion = get_criterion(yaml_args.Model.criterion)
     if yaml_args.General.MODEL_NAME == 'DTFD_MIL':
         classifier,attention,dimReduction,attCls = get_model_from_yaml(yaml_args)
-        state_dict = torch.load(model_weight_path,weights_only=True)
+        state_dict = torch.load(model_weight_path,map_location='cpu',weights_only=True)
         classifier.load_state_dict(state_dict['classifier'])
         attention.load_state_dict(state_dict['attention'])
         dimReduction.load_state_dict(state_dict['dimReduction'])
@@ -44,7 +47,7 @@ def test(args):
     else:
         mil_model = get_model_from_yaml(yaml_args)
         mil_model = mil_model.to(device)
-        mil_model.load_state_dict(torch.load(model_weight_path,weights_only=True))
+        mil_model.load_state_dict(torch.load(model_weight_path,map_location='cpu',weights_only=True))
 
     
     # CLAM_SB_MIL and CLAM_MB_MIL models have different val loop pipeline (has instance loss)
@@ -81,6 +84,14 @@ def test(args):
     # test_result_path = os.path.join(test_log_dir,f'Test_Result_{model_name}.csv')
     test_result_path = os.path.join(test_log_dir, f'Infer_Result.csv')
     result_to_save = pd.DataFrame(test_result)
+    # Keep the legacy ``probs`` field while also exposing numeric columns that
+    # can be merged safely across the five fold-specific best checkpoints.
+    if 'probs' in result_to_save.columns:
+        probabilities = result_to_save['probs'].apply(
+            lambda value: value.tolist() if hasattr(value, 'tolist') else list(value)
+        )
+        result_to_save['prob_0'] = probabilities.apply(lambda value: float(value[0]))
+        result_to_save['prob_1'] = probabilities.apply(lambda value: float(value[1]))
     result_to_save.to_csv(test_result_path,index=False,encoding='utf-8-sig')
     
 
@@ -91,6 +102,7 @@ if __name__ == '__main__':
     parser.add_argument('--test_dataset_csv',type=str,default='/path/to/your/ds-csv-path',help='path to dataset csv')
     parser.add_argument('--model_weight_path',type=str,default='/path/to/your/model-weight',help='path to model weights ')
     parser.add_argument('--test_log_dir',type=str,default='/path/to/your/test-log-dir',help='path to test log dir')
+    parser.add_argument('--device',type=str,default=None,help='Torch device override, e.g. cuda:0 or cpu')
     args = parser.parse_args()
     test(args)
 

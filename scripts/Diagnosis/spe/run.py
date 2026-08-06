@@ -86,6 +86,22 @@ def parse_args() -> argparse.Namespace:
             "directory; skips all model inference."
         ),
     )
+    parser.add_argument(
+        "--test-dataset-csv",
+        type=Path,
+        default=None,
+        help=(
+            "Standalone CSV with test_slide_path/test_label columns. The same "
+            "locked cohort is evaluated by all five folds and overrides "
+            "experiment.independent_test_dataset_root."
+        ),
+    )
+    parser.add_argument(
+        "--output-name",
+        type=str,
+        default=None,
+        help="Override experiment.name, useful for internal/external locked runs.",
+    )
     return parser.parse_args()
 
 
@@ -243,7 +259,21 @@ def discover_run(config: Any, configured_run_dir: str | None) -> Path:
 
 def patient_id_from_slide(slide_id: str) -> str:
     """Match the patient key used by the patient-level Diagnosis split."""
-    return str(slide_id).split(".", 1)[0]
+    value = str(slide_id)
+    external_ynzl = re.fullmatch(r"(\d{4}-\d+)-\d+\.\d+", value)
+    if external_ynzl is not None:
+        return external_ynzl.group(1)
+    if "." in value:
+        return value.split(".", 1)[0]
+    external_301 = re.fullmatch(
+        r"(B\d+)-\d+(?:\(\d+\))?", value, flags=re.IGNORECASE
+    )
+    if external_301 is not None:
+        return external_301.group(1)
+    external_ynzl_x = re.fullmatch(r"(X\d{4}-\d+)-\d+", value, flags=re.IGNORECASE)
+    if external_ynzl_x is not None:
+        return external_ynzl_x.group(1)
+    return value
 
 
 def split_metadata(dataset_csv: Path, split: str) -> pd.DataFrame:
@@ -813,7 +843,8 @@ def main() -> None:
     checkpoint_selection = settings.get("checkpoint_selection", {})
     names = [str(item["name"]) for item in architectures]
 
-    output_root = resolve_path(experiment["output_root"]) / str(experiment["name"])
+    experiment_name = str(cli.output_name or experiment["name"])
+    output_root = resolve_path(experiment["output_root"]) / experiment_name
     work_root = output_root / "member_predictions"
     threshold = float(experiment.get("classification_threshold", 0.5))
     if not 0.0 < threshold < 1.0:
@@ -821,7 +852,15 @@ def main() -> None:
 
     if cli.preflight:
         fold_csvs(resolve_path(experiment["development_dataset_root"]))
-        fold_csvs(resolve_path(experiment["independent_test_dataset_root"]))
+        if cli.test_dataset_csv is None:
+            fold_csvs(resolve_path(experiment["independent_test_dataset_root"]))
+        else:
+            standalone_test_csv = resolve_path(cli.test_dataset_csv)
+            if not standalone_test_csv.is_file():
+                raise FileNotFoundError(
+                    f"Standalone test CSV not found: {standalone_test_csv}"
+                )
+            split_metadata(standalone_test_csv, "test")
         for architecture in architectures:
             name = str(architecture["name"])
             architecture_config = read_yaml(str(resolve_path(architecture["config"])))
@@ -876,9 +915,18 @@ def main() -> None:
         development_folds = fold_csvs(
             resolve_path(experiment["development_dataset_root"])
         )
-        test_folds = fold_csvs(
-            resolve_path(experiment["independent_test_dataset_root"])
-        )
+        if cli.test_dataset_csv is None:
+            test_folds = fold_csvs(
+                resolve_path(experiment["independent_test_dataset_root"])
+            )
+        else:
+            standalone_test_csv = resolve_path(cli.test_dataset_csv)
+            if not standalone_test_csv.is_file():
+                raise FileNotFoundError(
+                    f"Standalone test CSV not found: {standalone_test_csv}"
+                )
+            split_metadata(standalone_test_csv, "test")
+            test_folds = {fold: standalone_test_csv for fold in range(1, 6)}
         oof_by_architecture: dict[str, pd.DataFrame] = {}
         test_by_architecture: dict[str, pd.DataFrame] = {}
         run_manifest: dict[str, Any] = {}
@@ -1373,6 +1421,12 @@ def main() -> None:
         ],
         "spe_config": str(config_path),
         "spe_config_sha256": config_hash,
+        "experiment_name": experiment_name,
+        "test_dataset_override": (
+            None
+            if cli.test_dataset_csv is None
+            else str(resolve_path(cli.test_dataset_csv))
+        ),
         "development_only_weight_fit": aggregation_strategy in {
             "weighted_mean",
             "constrained_linear_stacking",
