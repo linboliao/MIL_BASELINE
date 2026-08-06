@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -8,17 +11,20 @@ import torch
 
 from ensemble.spe import (
     architecture_disagreement,
+    class_patient_equal_sample_weights,
     fit_architecture_weights,
     patient_equal_sample_weights,
     residual_similarity_matrix,
     select_architectures,
+    select_architectures_for_balanced_accuracy,
 )
-from scripts.Diagnosis.run_spe import (
+from scripts.Diagnosis.spe.run import (
     architecture_test_prediction,
     configured_devices,
     dtfd_positive_probability,
     merge_architecture_test_predictions,
     prepare_inference_model,
+    selected_checkpoints,
     trajectory_predictions,
 )
 from utils.model_utils import get_model_from_yaml
@@ -57,6 +63,15 @@ class TestSPE(unittest.TestCase):
         self.assertAlmostEqual(float(weights[:3].sum()), 0.5)
         self.assertAlmostEqual(float(weights[3]), 0.5)
         self.assertAlmostEqual(float(weights.sum()), 1.0)
+
+    def test_class_patient_equal_weights(self):
+        labels = np.array([0, 0, 0, 1, 1, 1])
+        patients = np.array(["a", "a", "b", "c", "c", "d"])
+        weights = class_patient_equal_sample_weights(labels, patients)
+        self.assertAlmostEqual(float(weights[labels == 0].sum()), 0.5)
+        self.assertAlmostEqual(float(weights[labels == 1].sum()), 0.5)
+        self.assertAlmostEqual(float(weights[:2].sum()), float(weights[2]))
+        self.assertAlmostEqual(float(weights[3:5].sum()), float(weights[5]))
 
     def test_architecture_fit_is_simplex_and_favors_accuracy(self):
         labels = np.array([0, 0, 1, 1, 0, 1, 0, 1])
@@ -110,6 +125,62 @@ class TestSPE(unittest.TestCase):
         )
         self.assertEqual(selection.selected_names, ("good", "complement"))
         self.assertNotIn("unsuitable", selection.eligible_names)
+
+    def test_balanced_accuracy_architecture_selection(self):
+        labels = np.tile([0, 1], 20)
+        patients = np.array([f"p{index}" for index in range(len(labels))])
+        folds = np.repeat(np.arange(1, 6), 8)
+        good = np.where(labels == 1, 0.8, 0.2).astype(float)
+        good[::10] = 0.8
+        complement = np.where(labels == 1, 0.75, 0.25).astype(float)
+        complement[::10] = 0.05
+        unsuitable = 1.0 - np.where(labels == 1, 0.8, 0.2)
+        selection = select_architectures_for_balanced_accuracy(
+            np.column_stack([good, complement, unsuitable]),
+            labels,
+            patients,
+            folds,
+            ["good", "complement", "unsuitable"],
+            min_members=2,
+            max_members=3,
+            min_cv_improvement=1e-4,
+        )
+        self.assertEqual(selection.selected_names, ("complement", "good"))
+        self.assertNotIn("unsuitable", selection.eligible_names)
+
+    def test_high_performance_checkpoint_band(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fold_dir = Path(directory)
+            values = [0.70, 0.80, 0.798, 0.796, 0.79, 0.799, 0.794]
+            records = []
+            for epoch, value in enumerate(values, start=1):
+                relative = f"epoch_checkpoints/Epoch_{epoch:04d}.pth"
+                checkpoint = fold_dir / relative
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint.touch()
+                records.append(
+                    {
+                        "epoch": epoch,
+                        "checkpoint": relative,
+                        "val_metrics": {"bacc": value},
+                    }
+                )
+            (fold_dir / "checkpoint_manifest.json").write_text(
+                json.dumps({"epochs": records}), encoding="utf-8"
+            )
+            selected = selected_checkpoints(
+                fold_dir,
+                {
+                    "strategy": "high_performance_band",
+                    "metric": "bacc",
+                    "metric_tolerance": 0.005,
+                    "max_checkpoints": 3,
+                },
+            )
+            self.assertEqual(
+                [path.stem for path in selected],
+                ["Epoch_0002", "Epoch_0004", "Epoch_0006"],
+            )
 
     def test_paper_stable_interval_and_even_spacing(self):
         values = [0.70, 0.701, 0.702, 0.701, 0.703, 0.720, 0.721, 0.722, 0.721, 0.720, 0.719]

@@ -11,7 +11,8 @@ This directory configures the manuscript's Stability-Prioritized Ensemble:
 The stable interval is produced during training by `utils/spe_model_utils.py`:
 at least five consecutive saved checkpoints with adjacent validation macro-F1
 changes no greater than 0.003. If no interval qualifies, the final five saved
-checkpoints are used. Therefore all 11 SPE architectures must be trained with:
+checkpoints are used. Therefore every configured SPE candidate architecture
+must be trained with:
 
 ```yaml
 General:
@@ -24,18 +25,18 @@ General:
       max_checkpoints: 5
 ```
 
-Run on Linux after all five folds of all 11 architectures have completed:
+Run on Linux after all five folds of all configured architectures have completed:
 
 ```bash
-python -u scripts/Diagnosis/run_spe.py --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml --preflight
-bash scripts/Diagnosis/run_spe.sh
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml --preflight
+bash scripts/Diagnosis/spe/run.sh
 ```
 
 For architecture-level multi-GPU inference, assign one worker process to each
 visible GPU either from the command line:
 
 ```bash
-python -u scripts/Diagnosis/run_spe.py \
+python -u scripts/Diagnosis/spe/run.py \
   --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml \
   --devices cuda:0,cuda:1,cuda:2,cuda:3
 ```
@@ -43,9 +44,22 @@ python -u scripts/Diagnosis/run_spe.py \
 The shell wrapper also forwards arguments:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/Diagnosis/run_spe.sh \
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/Diagnosis/spe/run.sh \
   --devices cuda:0,cuda:1,cuda:2,cuda:3
 ```
+
+When checkpoint and fold predictions already exist under the same checkpoint
+policy, selection and weighting can be rebuilt without model inference:
+
+```bash
+python -u scripts/Diagnosis/spe/run.py \
+  --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml \
+  --refit-from result/Diagnosis/SPE/v3_bacc
+```
+
+Do not refit v3 from v1/v2: those directories contain probabilities from the
+old checkpoint policy and do not contain TDA_MIL. Cached refitting still uses
+only OOF labels; independent-test labels remain excluded.
 
 or set `experiment.devices: [cuda:0, cuda:1, cuda:2, cuda:3]` in YAML. Each
 GPU evaluates its MIL shard sequentially, while shards run concurrently. Do not
@@ -57,20 +71,28 @@ For the final paper run, replace every `run_dir: null` with the exact immutable
 training-run directory. Automatic latest-run discovery is convenient during
 development but is not appropriate for a locked analysis.
 
-Outputs are written to `result/Diagnosis/SPE/hierarchical_spe_v1/`:
+The current BAcc-oriented configuration preserves v1/v2 and writes outputs to
+`result/Diagnosis/SPE/v3_bacc/`. For every architecture/fold it retains epochs
+whose validation BAcc lies within 0.005 of that fold's best value, then spreads
+at most five checkpoints across that high-performance band. Architecture
+weights use class/patient-balanced loss, and members are forward-selected by
+five-fold held-out BAcc.
 
 - `oof_architecture_predictions.csv`: development OOF architecture matrix.
-- `architecture_weights.csv`: fitted non-negative weights and diagnostics.
+- `architecture_weights.csv`: development-selected status, fitted non-negative
+  weights, and diagnostics for every candidate.
 - `residual_similarity.csv`: patient-weighted architecture error correlation.
 - `architecture_test_predictions.csv`: fold-averaged member probabilities.
 - `spe_predictions.csv`: final probability, label and state/fold/architecture
   disagreement for each independent-test WSI.
 - `manifest.json`: config hash, exact run directories, checkpoints and fitting
-  diagnostics needed to reconstruct the locked ensemble.
+  diagnostics needed to reconstruct the locked ensemble, including every
+  fold-held-out forward-selection step.
 
 The manuscript supplied with this project says that exact weighting details
 belong in Supplementary Methods but does not contain that equation. The current
-transparent implementation minimizes patient-equal OOF binary cross-entropy
-plus a configurable residual-correlation penalty. If the final Supplementary
-Methods specifies a different objective, update `ensemble/spe.py`, increment the
-experiment name, and rerun development-only weight locking before any test use.
+transparent BAcc-oriented implementation uses class/patient-balanced OOF
+binary cross-entropy plus a configurable residual-correlation penalty, while
+membership is selected by held-out-fold BAcc. If the final Supplementary
+Methods specifies a different objective, update `ensemble/spe.py`, increment
+the experiment name, and rerun development-only locking before any test use.

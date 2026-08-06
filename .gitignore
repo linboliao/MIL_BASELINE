@@ -45,3 +45,5 @@ logs/
 # Temporary files
 *.tmp
 tmp/
+/result/
+/result/

@@ -1,5 +1,6 @@
 experiment:
-  name: hierarchical_spe_v1
+  # Keep v1/v2 immutable; the BAcc-oriented trajectory rerun is isolated.
+  name: v3_bacc
   device: cuda:0
   num_workers: 0
   preload: false
@@ -12,8 +13,19 @@ experiment:
 # leaves the exact objective to an unavailable Supplementary Methods section.
 # This implementation fits on patient-equal OOF development predictions only:
 # binary cross-entropy + diversity_lambda * residual-correlation penalty.
+checkpoint_selection:
+  # Retain only checkpoints within 0.005 BAcc of each fold's best validation
+  # epoch, then spread at most five states across that high-performance band.
+  strategy: high_performance_band
+  metric: bacc
+  metric_tolerance: 0.005
+  max_checkpoints: 5
+
 weighting:
   diversity_lambda: 0.05
+  # Balanced Accuracy is primary, so each class receives half of the fitting
+  # loss while slides from one patient still share that patient's influence.
+  class_balance: true
   max_iterations: 5000
   tolerance: 1.0e-10
 
@@ -22,11 +34,11 @@ weighting:
 # only when it improves patient-equal log loss on the held-out fold.
 selection:
   enabled: true
+  objective: balanced_accuracy
   min_members: 2
   max_members: 6
   min_cv_improvement: 0.001
-  require_better_than_null: true
-  max_individual_log_loss_gap: 0.10
+  max_individual_bacc_gap: 0.10
 
 # run_dir: null selects the latest complete five-fold run containing an SPE
 # checkpoint selection in every fold. Pin explicit run directories before the
@@ -59,9 +71,9 @@ architectures:
   - name: MSM_MIL
     config: configs/Diagnosis/MIL/MSM_MIL.yaml
     run_dir: null
-#  - name: TDA_MIL
-#    config: configs/Diagnosis/MIL/TDA_MIL.yaml
-#    run_dir: null
+  - name: TDA_MIL
+    config: configs/Diagnosis/MIL/TDA_MIL.yaml
+    run_dir: null
   - name: GDF_MIL
     config: configs/Diagnosis/MIL/GDF_MIL.yaml
     run_dir: null

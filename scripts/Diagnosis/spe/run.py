@@ -27,10 +27,18 @@ import yaml
 from torch.utils.data import DataLoader
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
-from ensemble.spe import architecture_disagreement, fit_architecture_weights
+from ensemble.spe import (
+    architecture_disagreement,
+    class_patient_equal_sample_weights,
+    fit_architecture_weights,
+    patient_equal_sample_weights,
+    residual_similarity_matrix,
+    select_architectures,
+    select_architectures_for_balanced_accuracy,
+)
 from utils.model_utils import get_model_from_yaml
 from utils.wsi_utils import WSI_Dataset
 from utils.yaml_utils import read_yaml
@@ -63,6 +71,16 @@ def parse_args() -> argparse.Namespace:
         "--preflight",
         action="store_true",
         help="Validate configs, datasets, runs and selected checkpoints without inference.",
+    )
+    parser.add_argument(
+        "--refit-from",
+        type=Path,
+        default=None,
+        help=(
+            "Reuse oof_architecture_predictions.csv and "
+            "architecture_test_predictions.csv from an existing SPE output "
+            "directory; skips all model inference."
+        ),
     )
     return parser.parse_args()
 
@@ -108,21 +126,77 @@ def fold_csvs(root: Path) -> dict[int, Path]:
     return paths
 
 
-def selected_checkpoints(fold_dir: Path) -> list[Path]:
-    selection_path = fold_dir / "spe_checkpoint_selection.json"
-    if not selection_path.is_file():
-        raise FileNotFoundError(
-            f"Missing {selection_path}. SPE requires a run trained with "
-            "General.checkpoint.save_mode=every_epoch; best+last alone cannot "
-            "reconstruct the paper's stable-state interval."
+def _evenly_spaced_records(
+    records: list[dict[str, Any]], count: int
+) -> list[dict[str, Any]]:
+    if len(records) <= count:
+        return records
+    if count == 1:
+        return [max(records, key=lambda record: int(record["epoch"]))]
+    indices = [
+        round(index * (len(records) - 1) / (count - 1))
+        for index in range(count)
+    ]
+    return [records[index] for index in indices]
+
+
+def selected_checkpoints(
+    fold_dir: Path,
+    policy: dict[str, Any] | None = None,
+) -> list[Path]:
+    policy = policy or {}
+    strategy = str(policy.get("strategy", "precomputed_stability"))
+    if strategy == "high_performance_band":
+        manifest_path = fold_dir / "checkpoint_manifest.json"
+        if not manifest_path.is_file():
+            raise FileNotFoundError(f"Missing checkpoint trajectory: {manifest_path}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        metric = str(policy.get("metric", "bacc"))
+        tolerance = float(policy.get("metric_tolerance", 0.005))
+        max_checkpoints = int(policy.get("max_checkpoints", 5))
+        if tolerance < 0 or not 1 <= max_checkpoints <= 5:
+            raise ValueError(
+                "checkpoint_selection requires metric_tolerance >= 0 and "
+                "max_checkpoints in 1..5."
+            )
+        records = [
+            record
+            for record in manifest.get("epochs", [])
+            if record.get("checkpoint")
+            and isinstance(record.get("val_metrics", {}).get(metric), (int, float))
+        ]
+        if not records:
+            raise ValueError(
+                f"No checkpoints in {manifest_path} contain val_metrics.{metric}."
+            )
+        best_metric = max(float(record["val_metrics"][metric]) for record in records)
+        eligible = sorted(
+            (
+                record
+                for record in records
+                if float(record["val_metrics"][metric]) >= best_metric - tolerance
+            ),
+            key=lambda record: int(record["epoch"]),
         )
-    selection = json.loads(selection_path.read_text(encoding="utf-8"))
-    records = selection.get("selected_checkpoints", [])
-    if not 1 <= len(records) <= 5:
-        raise ValueError(
-            f"{selection_path} must select 1..5 checkpoints, found {len(records)}."
-        )
-    checkpoints = [fold_dir / str(record["checkpoint"]) for record in records]
+        chosen = _evenly_spaced_records(eligible, max_checkpoints)
+        checkpoints = [fold_dir / str(record["checkpoint"]) for record in chosen]
+    elif strategy == "precomputed_stability":
+        selection_path = fold_dir / "spe_checkpoint_selection.json"
+        if not selection_path.is_file():
+            raise FileNotFoundError(
+                f"Missing {selection_path}. SPE requires a run trained with "
+                "General.checkpoint.save_mode=every_epoch; best+last alone cannot "
+                "reconstruct the paper's stable-state interval."
+            )
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        records = selection.get("selected_checkpoints", [])
+        if not 1 <= len(records) <= 5:
+            raise ValueError(
+                f"{selection_path} must select 1..5 checkpoints, found {len(records)}."
+            )
+        checkpoints = [fold_dir / str(record["checkpoint"]) for record in records]
+    else:
+        raise ValueError(f"Unknown checkpoint_selection.strategy={strategy!r}.")
     missing = [path for path in checkpoints if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"Selected checkpoint files are missing: {missing}")
@@ -387,8 +461,13 @@ def trajectory_predictions(state_frames: list[pd.DataFrame]) -> pd.DataFrame:
     return base
 
 
-def merge_architecture_oof(oof_by_architecture: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    names = list(oof_by_architecture)
+def merge_architecture_oof(
+    oof_by_architecture: dict[str, pd.DataFrame],
+    architecture_names: list[str],
+) -> pd.DataFrame:
+    names = list(architecture_names)
+    if set(names) != set(oof_by_architecture):
+        raise ValueError("architecture_names do not match the OOF prediction mapping.")
     first = oof_by_architecture[names[0]]
     merged = first[["slide_id", "patient_id", "type", "label", "fold"]].copy()
     for name in names:
@@ -493,6 +572,7 @@ def run_architecture(
     num_workers: int,
     preload: bool,
     overwrite: bool,
+    checkpoint_selection: dict[str, Any],
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     name = str(architecture["name"])
     config_path = resolve_path(architecture["config"])
@@ -508,7 +588,9 @@ def run_architecture(
     checkpoint_manifest: dict[str, list[str]] = {}
 
     for fold in range(1, 6):
-        checkpoints = selected_checkpoints(run_dir / f"fold_{fold}")
+        checkpoints = selected_checkpoints(
+            run_dir / f"fold_{fold}", checkpoint_selection
+        )
         checkpoint_manifest[str(fold)] = [str(path) for path in checkpoints]
         outputs: dict[str, pd.DataFrame] = {}
         for split, dataset_csv in (("val", development_folds[fold]), ("test", test_folds[fold])):
@@ -572,6 +654,7 @@ def _run_architecture_shard(
     num_workers: int,
     preload: bool,
     overwrite: bool,
+    checkpoint_selection: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Evaluate one architecture shard sequentially on one dedicated device."""
     device = torch.device(device_name)
@@ -590,6 +673,7 @@ def _run_architecture_shard(
             num_workers=num_workers,
             preload=preload,
             overwrite=overwrite,
+            checkpoint_selection=checkpoint_selection,
         )
         architecture_root = work_root / name / Path(metadata["training_run"]).name
         metadata["inference_device"] = device_name
@@ -614,6 +698,7 @@ def evaluate_architectures(
     num_workers: int,
     preload: bool,
     overwrite: bool,
+    checkpoint_selection: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Run independent MIL architectures in one spawn process per GPU."""
     worker_count = min(len(devices), len(architectures))
@@ -628,6 +713,7 @@ def evaluate_architectures(
             num_workers,
             preload,
             overwrite,
+            checkpoint_selection,
         )
 
     print(
@@ -652,6 +738,7 @@ def evaluate_architectures(
                 num_workers,
                 preload,
                 overwrite,
+                checkpoint_selection,
             )
             for index, shard in enumerate(shards)
         ]
@@ -671,10 +758,9 @@ def main() -> None:
     settings = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     experiment = settings["experiment"]
     architectures = settings["architectures"]
+    checkpoint_selection = settings.get("checkpoint_selection", {})
     names = [str(item["name"]) for item in architectures]
 
-    development_folds = fold_csvs(resolve_path(experiment["development_dataset_root"]))
-    test_folds = fold_csvs(resolve_path(experiment["independent_test_dataset_root"]))
     output_root = resolve_path(experiment["output_root"]) / str(experiment["name"])
     work_root = output_root / "member_predictions"
     threshold = float(experiment.get("classification_threshold", 0.5))
@@ -682,6 +768,8 @@ def main() -> None:
         raise ValueError("classification_threshold must lie strictly between 0 and 1.")
 
     if cli.preflight:
+        fold_csvs(resolve_path(experiment["development_dataset_root"]))
+        fold_csvs(resolve_path(experiment["independent_test_dataset_root"]))
         for architecture in architectures:
             name = str(architecture["name"])
             architecture_config = read_yaml(str(resolve_path(architecture["config"])))
@@ -691,57 +779,170 @@ def main() -> None:
                 )
             run_dir = discover_run(architecture_config, architecture.get("run_dir"))
             counts = [
-                len(selected_checkpoints(run_dir / f"fold_{fold}"))
+                len(
+                    selected_checkpoints(
+                        run_dir / f"fold_{fold}", checkpoint_selection
+                    )
+                )
                 for fold in range(1, 6)
             ]
             print(f"PASS {name}: run={run_dir} selected_states_per_fold={counts}")
         print("SPE preflight complete; no inference was performed.")
         return
 
-    devices = configured_devices(experiment, cli.devices)
-
-    oof_by_architecture: dict[str, pd.DataFrame] = {}
-    test_by_architecture: dict[str, pd.DataFrame] = {}
-    run_manifest: dict[str, Any] = {}
-    completed = evaluate_architectures(
-        architectures=architectures,
-        development_folds=development_folds,
-        test_folds=test_folds,
-        work_root=work_root,
-        devices=devices,
-        num_workers=int(experiment.get("num_workers", 0)),
-        preload=bool(experiment.get("preload", False)),
-        overwrite=cli.overwrite,
-    )
-    for result in completed:
-        name = str(result["name"])
-        oof_by_architecture[name] = pd.read_csv(
-            result["oof_path"],
+    refit_source = None
+    if cli.refit_from is not None:
+        refit_source = resolve_path(cli.refit_from).resolve()
+        oof_path = refit_source / "oof_architecture_predictions.csv"
+        test_path = refit_source / "architecture_test_predictions.csv"
+        if not oof_path.is_file() or not test_path.is_file():
+            raise FileNotFoundError(
+                "--refit-from must contain oof_architecture_predictions.csv "
+                "and architecture_test_predictions.csv."
+            )
+        oof = pd.read_csv(
+            oof_path,
             dtype={"slide_id": "string", "patient_id": "string", "type": "string"},
         )
-        test_by_architecture[name] = pd.read_csv(
-            result["test_path"],
+        test_base = pd.read_csv(
+            test_path,
             dtype={"slide_id": "string", "patient_id": "string", "type": "string"},
         )
-        run_manifest[name] = result["metadata"]
-    missing_results = set(names) - set(oof_by_architecture)
-    if missing_results:
-        raise RuntimeError(f"Architecture workers returned no result for {sorted(missing_results)}")
+        source_manifest_path = refit_source / "manifest.json"
+        if source_manifest_path.is_file():
+            source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+            run_manifest = source_manifest.get("architectures", {})
+        else:
+            run_manifest = {}
+        devices: list[str] = []
+        print(f"Refitting cached architecture predictions from {refit_source}")
+    else:
+        devices = configured_devices(experiment, cli.devices)
+        development_folds = fold_csvs(
+            resolve_path(experiment["development_dataset_root"])
+        )
+        test_folds = fold_csvs(
+            resolve_path(experiment["independent_test_dataset_root"])
+        )
+        oof_by_architecture: dict[str, pd.DataFrame] = {}
+        test_by_architecture: dict[str, pd.DataFrame] = {}
+        run_manifest: dict[str, Any] = {}
+        completed = evaluate_architectures(
+            architectures=architectures,
+            development_folds=development_folds,
+            test_folds=test_folds,
+            work_root=work_root,
+            devices=devices,
+            num_workers=int(experiment.get("num_workers", 0)),
+            preload=bool(experiment.get("preload", False)),
+            overwrite=cli.overwrite,
+            checkpoint_selection=checkpoint_selection,
+        )
+        for result in completed:
+            name = str(result["name"])
+            oof_by_architecture[name] = pd.read_csv(
+                result["oof_path"],
+                dtype={
+                    "slide_id": "string",
+                    "patient_id": "string",
+                    "type": "string",
+                },
+            )
+            test_by_architecture[name] = pd.read_csv(
+                result["test_path"],
+                dtype={
+                    "slide_id": "string",
+                    "patient_id": "string",
+                    "type": "string",
+                },
+            )
+            run_manifest[name] = result["metadata"]
+        missing_results = set(names) - set(oof_by_architecture)
+        if missing_results:
+            raise RuntimeError(
+                f"Architecture workers returned no result for {sorted(missing_results)}"
+            )
+        oof = merge_architecture_oof(oof_by_architecture, names)
+        test_base = merge_architecture_test_predictions(test_by_architecture, names)
 
-    oof = merge_architecture_oof(oof_by_architecture)
     probability_columns = [f"prob_{name}" for name in names]
+    missing_oof_columns = set(probability_columns).difference(oof.columns)
+    if missing_oof_columns:
+        raise ValueError(
+            f"OOF predictions are missing columns: {sorted(missing_oof_columns)}"
+        )
     probability_matrix = oof[probability_columns].to_numpy(dtype=np.float64)
     weighting = settings.get("weighting", {})
-    fit, similarity = fit_architecture_weights(
-        probability_matrix,
+    selection_settings = settings.get("selection", {})
+    selection = None
+    selected_names = list(names)
+    if bool(selection_settings.get("enabled", False)):
+        max_members_value = selection_settings.get("max_members")
+        selection_objective = str(
+            selection_settings.get("objective", "patient_equal_log_loss")
+        )
+        common_selection = {
+            "probabilities": probability_matrix,
+            "labels": oof["label"].to_numpy(),
+            "patient_ids": oof["patient_id"].astype(str).to_numpy(),
+            "fold_ids": oof["fold"].to_numpy(),
+            "architecture_names": names,
+            "diversity_lambda": float(weighting.get("diversity_lambda", 0.05)),
+            "min_members": int(selection_settings.get("min_members", 1)),
+            "max_members": (
+                None if max_members_value is None else int(max_members_value)
+            ),
+            "min_cv_improvement": float(
+                selection_settings.get("min_cv_improvement", 0.001)
+            ),
+            "max_iterations": int(weighting.get("max_iterations", 5000)),
+            "tolerance": float(weighting.get("tolerance", 1e-10)),
+        }
+        if selection_objective == "balanced_accuracy":
+            selection = select_architectures_for_balanced_accuracy(
+                **common_selection,
+                classification_threshold=threshold,
+                max_individual_bacc_gap=(
+                    None
+                    if selection_settings.get("max_individual_bacc_gap") is None
+                    else float(selection_settings["max_individual_bacc_gap"])
+                ),
+            )
+        elif selection_objective == "patient_equal_log_loss":
+            selection = select_architectures(
+                **common_selection,
+                require_better_than_null=bool(
+                    selection_settings.get("require_better_than_null", True)
+                ),
+                max_individual_log_loss_gap=(
+                    None
+                    if selection_settings.get("max_individual_log_loss_gap") is None
+                    else float(selection_settings["max_individual_log_loss_gap"])
+                ),
+            )
+        else:
+            raise ValueError(f"Unknown selection.objective={selection_objective!r}.")
+        selected_names = list(selection.selected_names)
+        print(f"Selected {len(selected_names)}/{len(names)} architectures: {selected_names}")
+
+    selected_indices = np.asarray(
+        [names.index(name) for name in selected_names], dtype=int
+    )
+    selected_probability_matrix = probability_matrix[:, selected_indices]
+    fit, _ = fit_architecture_weights(
+        selected_probability_matrix,
         labels=oof["label"].to_numpy(),
         patient_ids=oof["patient_id"].astype(str).to_numpy(),
-        architecture_names=names,
+        architecture_names=selected_names,
         diversity_lambda=float(weighting.get("diversity_lambda", 0.05)),
         max_iterations=int(weighting.get("max_iterations", 5000)),
         tolerance=float(weighting.get("tolerance", 1e-10)),
+        class_balance=bool(weighting.get("class_balance", False)),
     )
-    architecture_weights = np.asarray(fit.weights, dtype=np.float64)
+    architecture_weights = np.zeros(len(names), dtype=np.float64)
+    architecture_weights[selected_indices] = np.asarray(
+        fit.weights, dtype=np.float64
+    )
     oof["spe_prob_1"] = probability_matrix @ architecture_weights
     oof["spe_prediction"] = (oof["spe_prob_1"] >= threshold).astype(int)
     oof["architecture_disagreement"] = architecture_disagreement(
@@ -749,6 +950,17 @@ def main() -> None:
     )
     atomic_csv(oof, output_root / "oof_architecture_predictions.csv")
 
+    patient_ids = oof["patient_id"].astype(str).to_numpy()
+    patient_weights = (
+        class_patient_equal_sample_weights(oof["label"].to_numpy(), patient_ids)
+        if bool(weighting.get("class_balance", False))
+        else patient_equal_sample_weights(patient_ids)
+    )
+    similarity = residual_similarity_matrix(
+        probability_matrix,
+        oof["label"].to_numpy(),
+        patient_weights,
+    )
     similarity_frame = pd.DataFrame(similarity, index=names, columns=names)
     similarity_frame.index.name = "architecture"
     atomic_csv(similarity_frame.reset_index(), output_root / "residual_similarity.csv")
@@ -757,10 +969,6 @@ def main() -> None:
     for index, name in enumerate(names):
         architecture_probability = probability_matrix[:, index]
         clipped = np.clip(architecture_probability, 1e-7, 1 - 1e-7)
-        patient_weights = np.asarray(
-            [1.0 / int((oof["patient_id"].astype(str) == patient).sum()) for patient in oof["patient_id"].astype(str)]
-        )
-        patient_weights /= patient_weights.sum()
         log_loss = -np.sum(
             patient_weights
             * (oof["label"] * np.log(clipped) + (1 - oof["label"]) * np.log(1 - clipped))
@@ -768,6 +976,7 @@ def main() -> None:
         weight_rows.append(
             {
                 "architecture": name,
+                "selected": name in selected_names,
                 "weight": architecture_weights[index],
                 "patient_equal_oof_log_loss": float(log_loss),
                 "mean_residual_similarity_to_others": float(
@@ -777,10 +986,17 @@ def main() -> None:
         )
     atomic_csv(pd.DataFrame(weight_rows), output_root / "architecture_weights.csv")
 
-    test_base = merge_architecture_test_predictions(test_by_architecture, names)
     test_probability_columns = [f"prob_{name}" for name in names]
     state_variance_columns = [f"state_variance_{name}" for name in names]
     fold_variance_columns = [f"fold_variance_{name}" for name in names]
+    required_test_columns = (
+        test_probability_columns + state_variance_columns + fold_variance_columns
+    )
+    missing_test_columns = set(required_test_columns).difference(test_base.columns)
+    if missing_test_columns:
+        raise ValueError(
+            f"Test predictions are missing columns: {sorted(missing_test_columns)}"
+        )
     atomic_csv(test_base, output_root / "architecture_test_predictions.csv")
 
     test_matrix = test_base[test_probability_columns].to_numpy(dtype=np.float64)
@@ -808,13 +1024,27 @@ def main() -> None:
     manifest = {
         "schema_version": 1,
         "method": "stability-prioritized-hierarchical-ensemble",
-        "paper_hierarchy": ["stable_checkpoint_states", "five_folds", "eleven_architectures"],
+        "paper_hierarchy": [
+            "stable_checkpoint_states",
+            "five_folds",
+            "development_selected_architectures",
+        ],
         "spe_config": str(config_path),
         "spe_config_sha256": config_hash,
         "development_only_weight_fit": True,
         "independent_test_labels_used_for_fit": False,
+        "refit_from": None if refit_source is None else str(refit_source),
         "classification_threshold": threshold,
+        "checkpoint_selection": checkpoint_selection,
         "inference_devices": devices,
+        "architecture_selection": (
+            selection.as_dict()
+            if selection is not None
+            else {
+                "enabled": False,
+                "selected_names": names,
+            }
+        ),
         "weight_fit": fit.as_dict(),
         "architectures": run_manifest,
         "outputs": {

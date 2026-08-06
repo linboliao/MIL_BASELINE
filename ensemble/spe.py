@@ -64,6 +64,24 @@ class ArchitectureSelection:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class BalancedAccuracySelection:
+    """Fold-held-out architecture selection driven by Balanced Accuracy."""
+
+    candidate_names: tuple[str, ...]
+    eligible_names: tuple[str, ...]
+    selected_names: tuple[str, ...]
+    individual_balanced_accuracies: tuple[float, ...]
+    cross_validated_balanced_accuracy: float
+    classification_threshold: float
+    min_cv_improvement: float
+    max_individual_bacc_gap: float | None
+    steps: tuple[dict, ...]
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
 def _as_1d(values: Sequence, name: str) -> np.ndarray:
     array = np.asarray(values)
     if array.ndim != 1:
@@ -97,6 +115,24 @@ def patient_equal_sample_weights(patient_ids: Sequence) -> np.ndarray:
     weights /= float(len(unique_ids))
     if not np.isclose(weights.sum(), 1.0):
         raise AssertionError("Patient-equal sample weights do not sum to one.")
+    return np.ascontiguousarray(weights)
+
+
+def class_patient_equal_sample_weights(
+    labels: Sequence, patient_ids: Sequence
+) -> np.ndarray:
+    """Give each class half the loss weight while retaining patient equality."""
+    labels_array = _as_1d(labels, "labels")
+    if not np.isin(labels_array, [0.0, 1.0]).all():
+        raise ValueError("Class-balanced weighting requires binary labels 0/1.")
+    if np.unique(labels_array).size != 2:
+        raise ValueError("Class-balanced weighting requires both classes.")
+    weights = patient_equal_sample_weights(patient_ids)
+    for label in (0.0, 1.0):
+        mask = labels_array == label
+        weights[mask] *= 0.5 / weights[mask].sum()
+    if not np.isclose(weights.sum(), 1.0):
+        raise AssertionError("Class/patient-equal sample weights do not sum to one.")
     return np.ascontiguousarray(weights)
 
 
@@ -252,6 +288,7 @@ def fit_architecture_weights(
     diversity_lambda: float = 0.05,
     max_iterations: int = 5000,
     tolerance: float = 1e-10,
+    class_balance: bool = False,
 ) -> tuple[ArchitectureWeightFit, np.ndarray]:
     """Fit non-negative architecture weights from development OOF data only.
 
@@ -282,7 +319,11 @@ def fit_architecture_weights(
         if len(set(names)) != len(names):
             raise ValueError("architecture_names must be unique.")
 
-    sample_weights = patient_equal_sample_weights(patients)
+    sample_weights = (
+        class_patient_equal_sample_weights(labels_array, patients)
+        if class_balance
+        else patient_equal_sample_weights(patients)
+    )
     similarity = residual_similarity_matrix(probabilities, labels_array, sample_weights)
 
     optimizer_name = "projected-gradient"
@@ -518,6 +559,180 @@ def select_architectures(
             None
             if max_individual_log_loss_gap is None
             else float(max_individual_log_loss_gap)
+        ),
+        steps=tuple(steps),
+    )
+
+
+def _balanced_accuracy(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    threshold: float,
+) -> float:
+    predictions = probabilities >= threshold
+    positive = labels == 1.0
+    negative = labels == 0.0
+    if not positive.any() or not negative.any():
+        return float("nan")
+    sensitivity = float(predictions[positive].mean())
+    specificity = float((~predictions[negative]).mean())
+    return (sensitivity + specificity) / 2.0
+
+
+def select_architectures_for_balanced_accuracy(
+    probabilities: np.ndarray,
+    labels: Sequence,
+    patient_ids: Sequence,
+    fold_ids: Sequence,
+    architecture_names: Sequence[str],
+    diversity_lambda: float = 0.05,
+    classification_threshold: float = 0.5,
+    min_members: int = 1,
+    max_members: int | None = None,
+    min_cv_improvement: float = 1e-3,
+    max_individual_bacc_gap: float | None = 0.10,
+    max_iterations: int = 5000,
+    tolerance: float = 1e-10,
+) -> BalancedAccuracySelection:
+    """Forward-select members by fold-held-out Balanced Accuracy.
+
+    Weights inside every four-fold training split use class/patient-balanced
+    binary cross-entropy plus the residual-correlation penalty. Candidate
+    membership is then scored only on the untouched fifth-fold probabilities.
+    """
+    probabilities = _validate_probabilities(probabilities)
+    labels_array = _as_1d(labels, "labels")
+    patients = np.asarray(patient_ids, dtype=str)
+    folds = np.asarray(fold_ids)
+    names = tuple(str(name) for name in architecture_names)
+    sample_count, architecture_count = probabilities.shape
+
+    if any(len(values) != sample_count for values in (labels_array, patients, folds)):
+        raise ValueError("Labels/patient IDs/fold IDs do not match probability rows.")
+    if len(names) != architecture_count or len(set(names)) != architecture_count:
+        raise ValueError("architecture_names must uniquely match probability columns.")
+    if not np.isin(labels_array, [0.0, 1.0]).all():
+        raise ValueError("Balanced Accuracy selection requires binary labels 0/1.")
+    if not 0.0 < classification_threshold < 1.0:
+        raise ValueError("classification_threshold must lie strictly between 0 and 1.")
+    unique_folds = np.unique(folds)
+    if len(unique_folds) < 2:
+        raise ValueError("Architecture selection requires at least two OOF folds.")
+    patient_fold_counts = np.asarray(
+        [len(np.unique(folds[patients == patient])) for patient in np.unique(patients)]
+    )
+    if (patient_fold_counts > 1).any():
+        raise ValueError("A patient cannot occur in more than one OOF fold.")
+    if min_members < 1 or min_members > architecture_count:
+        raise ValueError("min_members must be between 1 and the candidate count.")
+    if max_members is None:
+        max_members = architecture_count
+    if max_members < min_members or max_members > architecture_count:
+        raise ValueError("max_members must be between min_members and candidate count.")
+    if min_cv_improvement < 0:
+        raise ValueError("min_cv_improvement must be non-negative.")
+    if max_individual_bacc_gap is not None and max_individual_bacc_gap < 0:
+        raise ValueError("max_individual_bacc_gap must be non-negative or null.")
+
+    individual_scores = np.asarray(
+        [
+            _balanced_accuracy(
+                labels_array,
+                probabilities[:, index],
+                classification_threshold,
+            )
+            for index in range(architecture_count)
+        ]
+    )
+    best_individual = float(np.nanmax(individual_scores))
+    eligible_mask = individual_scores > 0.5
+    if max_individual_bacc_gap is not None:
+        eligible_mask &= individual_scores >= best_individual - max_individual_bacc_gap
+    eligible = [index for index in range(architecture_count) if eligible_mask[index]]
+    if len(eligible) < min_members:
+        raise ValueError(
+            f"Only {len(eligible)} architectures passed the BAcc gate, fewer "
+            f"than selection.min_members={min_members}."
+        )
+
+    score_cache: dict[tuple[int, ...], float] = {}
+
+    def cross_validated_score(indices: Sequence[int]) -> float:
+        key = tuple(sorted(indices))
+        if key in score_cache:
+            return score_cache[key]
+        cross_fitted = np.empty(sample_count, dtype=np.float64)
+        sub_probabilities = probabilities[:, key]
+        for fold in unique_folds:
+            validation_mask = folds == fold
+            training_mask = ~validation_mask
+            fit, _ = fit_architecture_weights(
+                sub_probabilities[training_mask],
+                labels_array[training_mask],
+                patients[training_mask],
+                architecture_names=[names[index] for index in key],
+                diversity_lambda=diversity_lambda,
+                max_iterations=max_iterations,
+                tolerance=tolerance,
+                class_balance=True,
+            )
+            cross_fitted[validation_mask] = (
+                sub_probabilities[validation_mask] @ np.asarray(fit.weights)
+            )
+        score = _balanced_accuracy(
+            labels_array, cross_fitted, classification_threshold
+        )
+        score_cache[key] = score
+        return score
+
+    first = min(eligible, key=lambda index: (-individual_scores[index], names[index]))
+    selected = [first]
+    current_score = cross_validated_score(selected)
+    steps: list[dict] = [
+        {
+            "step": 1,
+            "added": names[first],
+            "cross_validated_balanced_accuracy": current_score,
+            "improvement": None,
+        }
+    ]
+    while len(selected) < max_members:
+        remaining = [index for index in eligible if index not in selected]
+        if not remaining:
+            break
+        scored = [
+            (cross_validated_score([*selected, index]), names[index], index)
+            for index in remaining
+        ]
+        candidate_score, _, candidate = min(
+            scored, key=lambda item: (-item[0], item[1])
+        )
+        improvement = candidate_score - current_score
+        if len(selected) >= min_members and improvement < min_cv_improvement:
+            break
+        selected.append(candidate)
+        current_score = candidate_score
+        steps.append(
+            {
+                "step": len(selected),
+                "added": names[candidate],
+                "cross_validated_balanced_accuracy": current_score,
+                "improvement": improvement,
+            }
+        )
+
+    return BalancedAccuracySelection(
+        candidate_names=names,
+        eligible_names=tuple(names[index] for index in eligible),
+        selected_names=tuple(names[index] for index in selected),
+        individual_balanced_accuracies=tuple(float(value) for value in individual_scores),
+        cross_validated_balanced_accuracy=float(current_score),
+        classification_threshold=float(classification_threshold),
+        min_cv_improvement=float(min_cv_improvement),
+        max_individual_bacc_gap=(
+            None
+            if max_individual_bacc_gap is None
+            else float(max_individual_bacc_gap)
         ),
         steps=tuple(steps),
     )
