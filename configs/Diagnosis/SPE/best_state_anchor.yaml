@@ -1,0 +1,84 @@
+experiment:
+  # Risk-controlled ensemble: preserve the strongest development OOF model
+  # and spend only a small probability budget on complementary architectures.
+  name: best_state_anchor
+  device: cuda:0
+  num_workers: 0
+  preload: false
+  classification_threshold: 0.5
+  development_dataset_root: datasets/Diagnosis/Stains/Reinhard
+  independent_test_dataset_root: datasets/Diagnosis/MIL
+  output_root: result/Diagnosis/SPE
+
+# Match the direct baseline exactly at state level: one Best_EPOCH checkpoint
+# per fold. This deliberately abandons the manuscript's stable-state average.
+checkpoint_selection:
+  strategy: best_state
+
+weighting:
+  diversity_lambda: 0.02
+  class_balance: true
+
+aggregation:
+  strategy: top1_anchor_fallback
+  # The OOF Top1 always owns at least 70% of the deployed probability mass.
+  anchor_min_weight: 0.70
+  # Directly optimize the BAcc endpoint over the small complement budget.
+  weight_grid_step: 0.01
+  # Deploy the ensemble only for a >=0.5 percentage-point OOF BAcc gain.
+  min_oof_bacc_gain: 0.005
+  # It must also be non-decreasing in at least four of the five OOF folds.
+  min_non_decreasing_folds: 4
+  fold_tolerance: 0.0
+
+selection:
+  # Top1 plus at most two complementary members keeps the intervention small
+  # and the resulting decision easy to explain.
+  min_members: 2
+  max_members: 3
+  min_cv_improvement: 0.001
+  max_individual_bacc_gap: 0.05
+
+architectures:
+  - name: AB_MIL
+    config: configs/Diagnosis/MIL/AB_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/AB_MIL/seed_42_2026-08-03-02-21
+  - name: CLAM_SB_MIL
+    config: configs/Diagnosis/MIL/CLAM_SB_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/CLAM_SB_MIL/seed_42_2026-08-01-23-53
+  - name: CLAM_MB_MIL
+    config: configs/Diagnosis/MIL/CLAM_MB_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/CLAM_MB_MIL/seed_42_2026-08-01-23-54
+  - name: TRANS_MIL
+    config: configs/Diagnosis/MIL/TRANS_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/TRANS_MIL/seed_42_2026-08-01-23-54
+  - name: WIKG_MIL
+    config: configs/Diagnosis/MIL/WIKG_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/WIKG_MIL/seed_42_2026-08-01-23-54
+  - name: MAMBA2D_MIL
+    config: configs/Diagnosis/MIL/MAMBA2D_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MAMBA2D_MIL/seed_42_2026-08-01-23-56
+  - name: AEM_MIL
+    config: configs/Diagnosis/MIL/AEM_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/AEM_MIL/seed_42_2026-08-03-02-22
+  - name: MICO_MIL
+    config: configs/Diagnosis/MIL/MICO_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MICO_MIL/seed_42_2026-08-03-02-23
+  - name: MSM_MIL
+    config: configs/Diagnosis/MIL/MSM_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MSM_MIL/seed_42_2026-08-03-02-24
+  - name: TDA_MIL
+    config: configs/Diagnosis/MIL/TDA_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/TDA_MIL/seed_42_2026-08-03-09-51
+  - name: GDF_MIL
+    config: configs/Diagnosis/MIL/GDF_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/GDF_MIL/seed_42_2026-08-02-23-27
+  - name: RRT_MIL
+    config: configs/Diagnosis/MIL/RRT_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/RRT_MIL/seed_42_2026-08-02-23-21
+  - name: DS_MIL
+    config: configs/Diagnosis/MIL/DS_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/DS_MIL/seed_42_2026-08-02-23-20
+  - name: DTFD_MIL
+    config: configs/Diagnosis/MIL/DTFD_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/DTFD_MIL/seed_42_2026-08-02-23-21
