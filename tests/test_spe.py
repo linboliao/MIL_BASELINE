@@ -20,6 +20,7 @@ from ensemble.spe import (
     select_architectures_for_balanced_accuracy,
     select_diversity_veto,
     select_sensitivity_constrained_subset,
+    select_top1_anchor_with_fallback,
 )
 from ensemble.ra_spe import fit_ra_spe, predict_ra_spe
 from scripts.Diagnosis.spe.run import (
@@ -30,6 +31,7 @@ from scripts.Diagnosis.spe.run import (
     patient_id_from_slide,
     prepare_inference_model,
     recover_cached_oof_state_variances,
+    resolve_cohort_name,
     selected_checkpoints,
     trajectory_predictions,
 )
@@ -39,6 +41,17 @@ from utils.spe_model_utils import _evenly_spaced_records, _stable_intervals
 
 
 class TestSPE(unittest.TestCase):
+    def test_output_cohort_defaults_and_override(self):
+        self.assertEqual(resolve_cohort_name(None, None), "Internal")
+        self.assertEqual(
+            resolve_cohort_name(Path("external.csv"), None), "External"
+        )
+        self.assertEqual(
+            resolve_cohort_name(Path("external.csv"), "Internal"), "Internal"
+        )
+        with self.assertRaisesRegex(ValueError, "Internal.*External"):
+            resolve_cohort_name(None, "invalid")
+
     def test_device_configuration(self):
         self.assertEqual(configured_devices({"device": "cpu"}, None), ["cpu"])
         self.assertEqual(
@@ -306,6 +319,61 @@ class TestSPE(unittest.TestCase):
                 [path.stem for path in selected],
                 ["Epoch_0002", "Epoch_0004", "Epoch_0006"],
             )
+
+    def test_best_state_checkpoint_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fold_dir = Path(directory)
+            checkpoint = fold_dir / "Best_EPOCH_17.pth"
+            checkpoint.touch()
+            self.assertEqual(
+                selected_checkpoints(fold_dir, {"strategy": "best_state"}),
+                [checkpoint],
+            )
+
+    def test_top1_anchor_deploys_only_after_guardrails_pass(self):
+        labels = np.tile([0, 0, 1, 1], 5)
+        folds = np.repeat(np.arange(1, 6), 4)
+        patients = np.asarray([f"p{index}" for index in range(len(labels))])
+        anchor = np.tile([0.49, 0.10, 0.49, 0.90], 5)
+        complement = np.tile([0.10, 0.90, 0.90, 0.10], 5)
+        weak = np.full(len(labels), 0.5)
+        selection, deployed_oof, proposed_oof = select_top1_anchor_with_fallback(
+            np.column_stack([anchor, complement, weak]),
+            labels,
+            patients,
+            folds,
+            ["anchor", "complement", "weak"],
+            min_members=2,
+            max_members=2,
+            max_individual_bacc_gap=0.30,
+            min_oof_bacc_gain=0.005,
+            min_non_decreasing_folds=4,
+        )
+        self.assertEqual(selection.anchor_name, "anchor")
+        self.assertFalse(selection.fallback_triggered)
+        self.assertEqual(selection.deployed_names, ("anchor", "complement"))
+        self.assertGreaterEqual(selection.deployed_weights[0], 0.70)
+        np.testing.assert_allclose(deployed_oof, proposed_oof)
+
+    def test_top1_anchor_falls_back_when_there_is_no_gain(self):
+        labels = np.tile([0, 1], 5)
+        folds = np.repeat(np.arange(1, 6), 2)
+        patients = np.asarray([f"p{index}" for index in range(len(labels))])
+        anchor = np.tile([0.1, 0.9], 5)
+        selection, deployed_oof, _ = select_top1_anchor_with_fallback(
+            np.column_stack([anchor, anchor]),
+            labels,
+            patients,
+            folds,
+            ["anchor", "copy"],
+            min_members=2,
+            max_members=2,
+            max_individual_bacc_gap=None,
+        )
+        self.assertTrue(selection.fallback_triggered)
+        self.assertEqual(selection.deployed_names, ("anchor",))
+        np.testing.assert_allclose(selection.deployed_weights, [1.0, 0.0])
+        np.testing.assert_allclose(deployed_oof, anchor)
 
     def test_paper_stable_interval_and_even_spacing(self):
         values = [0.70, 0.701, 0.702, 0.701, 0.703, 0.720, 0.721, 0.722, 0.721, 0.720, 0.719]

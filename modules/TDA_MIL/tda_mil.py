@@ -294,9 +294,15 @@ class TDA_MIL(nn.Module):
         # Limit sequence length to avoid OOM
         sampled_indices = None
         if N > self.max_seq_len:
-            # Randomly sample max_seq_len patches
-            indices = torch.randperm(N, device=x.device)[:self.max_seq_len]
-            indices = torch.sort(indices)[0]  # Keep original order
+            if self.training:
+                indices = torch.randperm(N, device=x.device)[:self.max_seq_len]
+                indices = torch.sort(indices)[0]  # Keep original order
+            else:
+                # Evaluation must be repeatable across baseline and ensemble
+                # runs. Even spacing covers the full ordered bag without RNG.
+                indices = torch.linspace(
+                    0, N - 1, steps=self.max_seq_len, device=x.device
+                ).long()
             sampled_indices = indices.cpu().numpy()  # Save for mapping back
             x = x[:, indices, :]
             mask = mask[:, indices]

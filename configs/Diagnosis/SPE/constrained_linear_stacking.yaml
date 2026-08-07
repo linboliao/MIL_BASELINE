@@ -1,5 +1,5 @@
 experiment:
-  name: v6_constrained_linear_stacking
+  name: constrained_linear_stacking
   device: cuda:0
   num_workers: 0
   preload: false

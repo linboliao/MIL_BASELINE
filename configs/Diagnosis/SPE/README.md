@@ -1,5 +1,47 @@
 # Hierarchical SPE
 
+## Best-state + Top1-anchor + automatic fallback
+
+`best_state_anchor.yaml` is a risk-controlled alternative to the manuscript
+hierarchy. Its story is deliberately deployment-oriented: first align every
+member with the direct baseline by using exactly one `Best_EPOCH` per fold;
+then identify the strongest development-OOF architecture as an immutable
+anchor; finally allow at most two complementary members to use the remaining
+probability budget. The anchor always retains at least 70% weight.
+
+The proposed blend is deployed only when both locked development criteria pass:
+
+- pooled fold-held-out OOF BAcc improves by at least 0.005;
+- at least four of five OOF folds are non-decreasing versus Top1.
+
+Otherwise the pipeline writes Top1 probabilities as the final prediction and
+records the candidate ensemble, fold diagnostics, and fallback reasons in the
+CSV/manifest. Internal and external runs use the same development-locked
+decision; external labels never enter member selection, weighting, or fallback.
+TDA uses deterministic evenly spaced patch subsampling during evaluation, and
+GDF replaces Gumbel sampling with the corresponding softmax in evaluation, so
+the Best-state baseline and this ensemble see reproducible member predictions.
+
+```bash
+python -u scripts/Diagnosis/spe/run.py \
+  --spe-config configs/Diagnosis/SPE/best_state_anchor.yaml --preflight
+CUDA_VISIBLE_DEVICES=5,6,7 python -u scripts/Diagnosis/spe/run.py \
+  --spe-config configs/Diagnosis/SPE/best_state_anchor.yaml \
+  --devices cuda:0,cuda:1,cuda:2
+python -u scripts/Diagnosis/spe/summarize_performance.py \
+  --predictions result/Diagnosis/SPE/Internal/best_state_anchor/spe_predictions.csv \
+  --skip-center
+```
+
+For the external cohort, run inference with the same YAML and locked OOF rule:
+
+```bash
+CUDA_VISIBLE_DEVICES=5,6,7 python -u scripts/Diagnosis/spe/run.py \
+  --spe-config configs/Diagnosis/SPE/best_state_anchor.yaml \
+  --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv \
+  --output-name best_state_anchor_external --devices cuda:0,cuda:1,cuda:2
+```
+
 This directory configures the manuscript's Stability-Prioritized Ensemble:
 
 1. Within each architecture/fold trajectory, average up to five approximately
@@ -54,11 +96,11 @@ policy, selection and weighting can be rebuilt without model inference:
 ```bash
 python -u scripts/Diagnosis/spe/run.py \
   --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml \
-  --refit-from result/Diagnosis/SPE/v3_bacc
+  --refit-from result/Diagnosis/SPE/Internal/bacc
 ```
 
-Do not refit v3 from v1/v2: those directories contain probabilities from the
-old checkpoint policy and do not contain TDA_MIL. Cached refitting still uses
+Do not refit the BAcc run from legacy output directories: those directories
+contain probabilities from the old checkpoint policy and may omit TDA_MIL. Cached refitting still uses
 only OOF labels; independent-test labels remain excluded.
 
 ## Learnable aggregators
@@ -70,7 +112,7 @@ per-architecture cap, and a minimum effective-member constraint:
 ```bash
 python -u scripts/Diagnosis/spe/run.py \
   --spe-config configs/Diagnosis/SPE/constrained_linear_stacking.yaml \
-  --refit-from result/Diagnosis/SPE/v3_bacc
+  --refit-from result/Diagnosis/SPE/Internal/bacc
 ```
 
 RA-SPE fits a small sample-specific gating network and reports meta-level
@@ -83,7 +125,7 @@ inter-architecture disagreement features:
 ```bash
 python -u scripts/Diagnosis/spe/run.py \
   --spe-config configs/Diagnosis/SPE/ra_spe.yaml \
-  --refit-from result/Diagnosis/SPE/v3_bacc
+  --refit-from result/Diagnosis/SPE/Internal/bacc
 ```
 
 For the final paper experiment, run RA-SPE without `--refit-from` (or regenerate
@@ -92,23 +134,22 @@ network is saved as `ra_spe_aggregator.pt`; sample-specific weights are written
 to both OOF and independent prediction CSVs. Neither method learns a decision
 threshold: classification remains fixed at 0.5.
 
-To lock sensitivity to the v3 development reference and optimize specificity
+To lock sensitivity to the BAcc development reference and optimize specificity
 and BAcc over equal-weight architecture subsets, use:
 
 ```bash
 python -u scripts/Diagnosis/spe/run.py \
   --spe-config configs/Diagnosis/SPE/sensitivity_constrained.yaml \
-  --refit-from result/Diagnosis/SPE/v3_bacc
+  --refit-from result/Diagnosis/SPE/Internal/bacc
 ```
 
 The effective threshold is selected from positive-class OOF order statistics
 and recorded in `manifest.json`. Pass that threshold to the performance
-summarizer; for the current locked v5 result the command is:
+summarizer; the command is:
 
 ```bash
 python scripts/Diagnosis/spe/summarize_performance.py \
-  --predictions result/Diagnosis/SPE/v5_sensitivity_constrained/spe_predictions.csv \
-  --output-dir result/Diagnosis/SPE/v5_sensitivity_constrained/performance \
+  --predictions result/Diagnosis/SPE/Internal/sensitivity_constrained/spe_predictions.csv \
   --threshold 0.455923717620198 \
   --skip-center
 ```
@@ -123,8 +164,10 @@ For the final paper run, replace every `run_dir: null` with the exact immutable
 training-run directory. Automatic latest-run discovery is convenient during
 development but is not appropriate for a locked analysis.
 
-The current BAcc-oriented configuration preserves v1/v2 and writes outputs to
-`result/Diagnosis/SPE/v3_bacc/`. For every architecture/fold it retains epochs
+SPE outputs are grouped by locked cohort. Internal runs are written below
+`result/Diagnosis/SPE/Internal/`, while a standalone test CSV defaults to
+`result/Diagnosis/SPE/External/`. The BAcc-oriented configuration writes to
+`result/Diagnosis/SPE/Internal/bacc/`. For every architecture/fold it retains epochs
 whose validation BAcc lies within 0.005 of that fold's best value, then spreads
 at most five checkpoints across that high-performance band. Architecture
 weights use class/patient-balanced loss, and members are forward-selected by

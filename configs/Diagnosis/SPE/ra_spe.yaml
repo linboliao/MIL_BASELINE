@@ -1,5 +1,5 @@
 experiment:
-  name: v7_ra_spe
+  name: ra_spe
   device: cuda:0
   num_workers: 0
   preload: false

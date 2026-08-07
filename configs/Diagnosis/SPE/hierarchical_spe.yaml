@@ -1,6 +1,6 @@
 experiment:
-  # Keep v1/v2 immutable; the BAcc-oriented trajectory rerun is isolated.
-  name: v3_bacc
+  # BAcc-oriented base run; outputs are grouped under SPE/Internal or External.
+  name: bacc
   device: cuda:0
   num_workers: 0
   preload: false

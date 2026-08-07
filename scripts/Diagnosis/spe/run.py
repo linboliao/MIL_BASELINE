@@ -41,6 +41,7 @@ from ensemble.spe import (
     select_architectures_for_balanced_accuracy,
     select_diversity_veto,
     select_sensitivity_constrained_subset,
+    select_top1_anchor_with_fallback,
 )
 from ensemble.ra_spe import fit_ra_spe, predict_ra_spe, ra_spe_checkpoint
 from utils.model_utils import get_model_from_yaml
@@ -100,7 +101,16 @@ def parse_args() -> argparse.Namespace:
         "--output-name",
         type=str,
         default=None,
-        help="Override experiment.name, useful for internal/external locked runs.",
+        help="Override experiment.name, useful for named locked runs.",
+    )
+    parser.add_argument(
+        "--cohort-name",
+        choices=("Internal", "External"),
+        default=None,
+        help=(
+            "Output cohort directory below experiment.output_root. Defaults to "
+            "Internal, or External when --test-dataset-csv is supplied."
+        ),
     )
     return parser.parse_args()
 
@@ -108,6 +118,18 @@ def parse_args() -> argparse.Namespace:
 def resolve_path(value: str | Path) -> Path:
     path = Path(value)
     return path if path.is_absolute() else REPO_ROOT / path
+
+
+def resolve_cohort_name(
+    test_dataset_csv: Path | None,
+    configured_name: str | None,
+) -> str:
+    """Return the stable top-level output group for a locked test cohort."""
+    if configured_name is not None:
+        if configured_name not in {"Internal", "External"}:
+            raise ValueError("cohort name must be 'Internal' or 'External'.")
+        return configured_name
+    return "External" if test_dataset_csv is not None else "Internal"
 
 
 def atomic_csv(frame: pd.DataFrame, output_path: Path) -> None:
@@ -166,7 +188,14 @@ def selected_checkpoints(
 ) -> list[Path]:
     policy = policy or {}
     strategy = str(policy.get("strategy", "precomputed_stability"))
-    if strategy == "high_performance_band":
+    if strategy == "best_state":
+        checkpoints = sorted(fold_dir.glob("Best_EPOCH_*.pth"))
+        if len(checkpoints) != 1:
+            raise FileNotFoundError(
+                f"Expected exactly one Best_EPOCH checkpoint in {fold_dir}, "
+                f"found {len(checkpoints)}."
+            )
+    elif strategy == "high_performance_band":
         manifest_path = fold_dir / "checkpoint_manifest.json"
         if not manifest_path.is_file():
             raise FileNotFoundError(f"Missing checkpoint trajectory: {manifest_path}")
@@ -223,19 +252,27 @@ def selected_checkpoints(
     return checkpoints
 
 
-def complete_spe_run(run_dir: Path) -> bool:
+def complete_spe_run(
+    run_dir: Path, checkpoint_selection: dict[str, Any] | None = None
+) -> bool:
     try:
         for fold in range(1, 6):
-            selected_checkpoints(run_dir / f"fold_{fold}")
+            selected_checkpoints(
+                run_dir / f"fold_{fold}", checkpoint_selection
+            )
         return True
     except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError):
         return False
 
 
-def discover_run(config: Any, configured_run_dir: str | None) -> Path:
+def discover_run(
+    config: Any,
+    configured_run_dir: str | None,
+    checkpoint_selection: dict[str, Any] | None = None,
+) -> Path:
     if configured_run_dir:
         run_dir = resolve_path(configured_run_dir)
-        if not complete_spe_run(run_dir):
+        if not complete_spe_run(run_dir, checkpoint_selection):
             raise FileNotFoundError(f"Not a complete five-fold SPE run: {run_dir}")
         return run_dir
     model_root = (
@@ -249,11 +286,11 @@ def discover_run(config: Any, configured_run_dir: str | None) -> Path:
         reverse=True,
     )
     for candidate in candidates:
-        if complete_spe_run(candidate):
+        if complete_spe_run(candidate, checkpoint_selection):
             return candidate
     raise FileNotFoundError(
-        f"No complete SPE training run under {model_root}. Re-run this architecture "
-        "with every_epoch checkpoint saving enabled."
+        f"No complete five-fold training run under {model_root} satisfies "
+        f"checkpoint_selection={checkpoint_selection or {'strategy': 'precomputed_stability'}}."
     )
 
 
@@ -663,7 +700,9 @@ def run_architecture(
         raise ValueError(
             f"Architecture name {name} does not match {config_path}: {config.General.MODEL_NAME}"
         )
-    run_dir = discover_run(config, architecture.get("run_dir"))
+    run_dir = discover_run(
+        config, architecture.get("run_dir"), checkpoint_selection
+    )
     architecture_root = work_root / name / run_dir.name
     fold_oof: list[pd.DataFrame] = []
     fold_test: list[pd.DataFrame] = []
@@ -844,7 +883,10 @@ def main() -> None:
     names = [str(item["name"]) for item in architectures]
 
     experiment_name = str(cli.output_name or experiment["name"])
-    output_root = resolve_path(experiment["output_root"]) / experiment_name
+    cohort_name = resolve_cohort_name(cli.test_dataset_csv, cli.cohort_name)
+    output_root = (
+        resolve_path(experiment["output_root"]) / cohort_name / experiment_name
+    )
     work_root = output_root / "member_predictions"
     threshold = float(experiment.get("classification_threshold", 0.5))
     if not 0.0 < threshold < 1.0:
@@ -868,7 +910,11 @@ def main() -> None:
                 raise ValueError(
                     f"Architecture name {name} does not match configured MODEL_NAME."
                 )
-            run_dir = discover_run(architecture_config, architecture.get("run_dir"))
+            run_dir = discover_run(
+                architecture_config,
+                architecture.get("run_dir"),
+                checkpoint_selection,
+            )
             counts = [
                 len(
                     selected_checkpoints(
@@ -903,8 +949,21 @@ def main() -> None:
         if source_manifest_path.is_file():
             source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
             run_manifest = source_manifest.get("architectures", {})
+            if (
+                str(checkpoint_selection.get("strategy", "")) == "best_state"
+                and source_manifest.get("checkpoint_selection") != checkpoint_selection
+            ):
+                raise ValueError(
+                    "--refit-from does not use the requested best_state checkpoint "
+                    "policy. Generate a Best-state prediction pool first."
+                )
         else:
             run_manifest = {}
+            if str(checkpoint_selection.get("strategy", "")) == "best_state":
+                raise ValueError(
+                    "A best_state --refit-from directory must contain manifest.json "
+                    "so its checkpoint policy can be verified."
+                )
         oof = recover_cached_oof_state_variances(
             oof, refit_source, names, run_manifest
         )
@@ -992,6 +1051,9 @@ def main() -> None:
     ra_oof_weights = None
     linear_crossfit_weights = None
     linear_oof_weight_matrix = None
+    anchor_guard = None
+    anchor_guard_oof_probability = None
+    anchor_guard_proposed_oof_probability = None
     if aggregation_strategy == "diversity_veto":
         selection = select_diversity_veto(
             probability_matrix,
@@ -1066,8 +1128,50 @@ def main() -> None:
         "weighted_mean",
         "constrained_linear_stacking",
         "ra_spe",
+        "top1_anchor_fallback",
     }:
         raise ValueError(f"Unknown aggregation.strategy={aggregation_strategy!r}.")
+    elif aggregation_strategy == "top1_anchor_fallback":
+        anchor_guard, anchor_guard_oof_probability, anchor_guard_proposed_oof_probability = (
+            select_top1_anchor_with_fallback(
+                probability_matrix,
+                labels=oof["label"].to_numpy(),
+                patient_ids=oof["patient_id"].astype(str).to_numpy(),
+                fold_ids=oof["fold"].to_numpy(),
+                architecture_names=names,
+                diversity_lambda=float(weighting.get("diversity_lambda", 0.02)),
+                classification_threshold=threshold,
+                anchor_min_weight=float(aggregation.get("anchor_min_weight", 0.70)),
+                weight_grid_step=float(aggregation.get("weight_grid_step", 0.01)),
+                min_members=int(selection_settings.get("min_members", 2)),
+                max_members=int(selection_settings.get("max_members", 3)),
+                min_cv_member_improvement=float(
+                    selection_settings.get("min_cv_improvement", 0.0)
+                ),
+                max_individual_bacc_gap=(
+                    None
+                    if selection_settings.get("max_individual_bacc_gap") is None
+                    else float(selection_settings["max_individual_bacc_gap"])
+                ),
+                min_oof_bacc_gain=float(
+                    aggregation.get("min_oof_bacc_gain", 0.005)
+                ),
+                min_non_decreasing_folds=int(
+                    aggregation.get("min_non_decreasing_folds", 4)
+                ),
+                fold_tolerance=float(aggregation.get("fold_tolerance", 0.0)),
+            )
+        )
+        selection = anchor_guard
+        selected_names = list(anchor_guard.deployed_names)
+        mode = "Top1 fallback" if anchor_guard.fallback_triggered else "anchored ensemble"
+        print(
+            f"Top1-anchor guard: anchor={anchor_guard.anchor_name}, "
+            f"proposal={list(anchor_guard.proposed_selected_names)}, "
+            f"OOF gain={anchor_guard.balanced_accuracy_gain:.6f}, "
+            f"non-decreasing folds={anchor_guard.non_decreasing_folds}/"
+            f"{len(anchor_guard.fold_diagnostics)} -> {mode}"
+        )
     elif aggregation_strategy == "weighted_mean" and bool(
         selection_settings.get("enabled", False)
     ):
@@ -1249,6 +1353,19 @@ def main() -> None:
             f"sensitivity={ra_fit.cross_fitted_sensitivity:.6f}, "
             f"specificity={ra_fit.cross_fitted_specificity:.6f}"
         )
+    elif aggregation_strategy == "top1_anchor_fallback":
+        if anchor_guard is None or anchor_guard_oof_probability is None:
+            raise AssertionError("Top1-anchor guard was not fitted.")
+        architecture_weights[:] = np.asarray(
+            anchor_guard.deployed_weights, dtype=np.float64
+        )
+        oof["top1_anchor_prob_1"] = probability_matrix[
+            :, names.index(anchor_guard.anchor_name)
+        ]
+        oof["proposed_anchor_ensemble_prob_1"] = (
+            anchor_guard_proposed_oof_probability
+        )
+        oof["spe_prob_1"] = anchor_guard_oof_probability
     else:
         fit, _ = fit_architecture_weights(
             selected_probability_matrix,
@@ -1317,6 +1434,21 @@ def main() -> None:
                 "architecture": name,
                 "selected": name in selected_names,
                 "weight": architecture_weights[index],
+                "proposed_weight": (
+                    float(anchor_guard.proposed_weights[index])
+                    if anchor_guard is not None
+                    else architecture_weights[index]
+                ),
+                "ensemble_role": (
+                    "anchor"
+                    if anchor_guard is not None and name == anchor_guard.anchor_name
+                    else (
+                        "proposed_complement"
+                        if anchor_guard is not None
+                        and name in anchor_guard.proposed_selected_names
+                        else "candidate"
+                    )
+                ),
                 "weight_std": (
                     float(ra_oof_weights[:, index].std())
                     if ra_oof_weights is not None
@@ -1374,6 +1506,18 @@ def main() -> None:
             final[f"weight_{name}"] = test_ra_weights[:, index]
     else:
         final["prob_1"] = test_matrix @ architecture_weights
+    if anchor_guard is not None:
+        anchor_index = names.index(anchor_guard.anchor_name)
+        final["top1_anchor_prob_1"] = test_matrix[:, anchor_index]
+        final["proposed_anchor_ensemble_prob_1"] = test_matrix @ np.asarray(
+            anchor_guard.proposed_weights, dtype=np.float64
+        )
+        final["automatic_fallback_applied"] = anchor_guard.fallback_triggered
+        final["deployment_mode"] = (
+            "top1_fallback"
+            if anchor_guard.fallback_triggered
+            else "top1_anchored_ensemble"
+        )
     final["prob_0"] = 1.0 - final["prob_1"]
     final["prediction"] = (final["prob_1"] >= decision_threshold).astype(int)
     if test_ra_weights is not None:
@@ -1412,16 +1556,36 @@ def main() -> None:
 
     config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
     manifest = {
-        "schema_version": 1,
-        "method": "stability-prioritized-hierarchical-ensemble",
-        "paper_hierarchy": [
-            "stable_checkpoint_states",
-            "five_folds",
-            "development_selected_architectures",
-        ],
+        "schema_version": 2 if aggregation_strategy == "top1_anchor_fallback" else 1,
+        "method": (
+            "best-state-top1-anchor-automatic-fallback"
+            if aggregation_strategy == "top1_anchor_fallback"
+            else "stability-prioritized-hierarchical-ensemble"
+        ),
+        "paper_hierarchy": (
+            None
+            if aggregation_strategy == "top1_anchor_fallback"
+            else [
+                "stable_checkpoint_states",
+                "five_folds",
+                "development_selected_architectures",
+            ]
+        ),
+        "design_story": (
+            [
+                "one_best_state_per_fold",
+                "development_oof_top1_anchor",
+                "bounded_complement_risk_budget",
+                "oof_gain_and_fold_stability_guardrail",
+                "automatic_top1_fallback",
+            ]
+            if aggregation_strategy == "top1_anchor_fallback"
+            else None
+        ),
         "spe_config": str(config_path),
         "spe_config_sha256": config_hash,
         "experiment_name": experiment_name,
+        "cohort": cohort_name,
         "test_dataset_override": (
             None
             if cli.test_dataset_csv is None
@@ -1431,6 +1595,7 @@ def main() -> None:
             "weighted_mean",
             "constrained_linear_stacking",
             "ra_spe",
+            "top1_anchor_fallback",
         },
         "independent_test_labels_used_for_fit": False,
         "refit_from": None if refit_source is None else str(refit_source),
@@ -1450,6 +1615,9 @@ def main() -> None:
             ),
             "ra_spe_fit": None if ra_fit is None else ra_fit.as_dict(),
             "linear_crossfit_weights": linear_crossfit_weights,
+            "top1_anchor_guard": (
+                None if anchor_guard is None else anchor_guard.as_dict()
+            ),
         },
         "architecture_selection": (
             selection.as_dict()

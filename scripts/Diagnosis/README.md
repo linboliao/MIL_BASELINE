@@ -66,9 +66,9 @@ only part of the workflow is required, and edit each command's visible GPU ID
 directly when adapting it to another server.
 
 Best-checkpoint model results are stored below
-`result/Diagnosis/ModelTest/{internal,external}/`. SPE versions are stored in
-their immutable `result/Diagnosis/SPE/v*_.../` directories; external outputs
-carry the `_external` suffix. The performance summarizer automatically reads
+`result/Diagnosis/ModelTest/{internal,external}/`. SPE versions are grouped as
+`result/Diagnosis/SPE/{Internal,External}/<experiment>/`; external experiment
+names carry the `_external` suffix. The performance summarizer automatically reads
 the locked decision threshold from each SPE manifest, which is required for
 the sensitivity-constrained version.
 

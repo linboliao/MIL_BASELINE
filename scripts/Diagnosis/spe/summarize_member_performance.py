@@ -16,8 +16,12 @@ import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_INPUT_ROOT = REPO_ROOT / "result/Diagnosis/SPE/member_predictions"
-DEFAULT_OUTPUT = REPO_ROOT / "result/Diagnosis/SPE/performance/overall_metrics.csv"
+DEFAULT_INPUT_ROOT = (
+    REPO_ROOT / "result/Diagnosis/SPE/Internal/bacc/member_predictions"
+)
+DEFAULT_OUTPUT = (
+    REPO_ROOT / "result/Diagnosis/SPE/Internal/bacc/performance/member_metrics.csv"
+)
 METRIC_NAMES = (
     "accuracy",
     "balanced_accuracy",

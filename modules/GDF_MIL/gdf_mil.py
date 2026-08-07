@@ -122,7 +122,14 @@ class BagPartition(nn.Module):
     def forward(self, X):
         X = X.squeeze(0)
         assert len(X.shape) == 2
-        P = F.gumbel_softmax(self.cluster_logits(X), tau=0.5, hard=False)
+        cluster_logits = self.cluster_logits(X)
+        if self.training:
+            P = F.gumbel_softmax(cluster_logits, tau=0.5, hard=False)
+        else:
+            # Gumbel noise is useful regularization during training but makes
+            # repeated checkpoint evaluation disagree. Use its deterministic
+            # softmax counterpart for locked inference.
+            P = F.softmax(cluster_logits / 0.5, dim=-1)
         partitions = P.T @ X  # n x 512
 
         return partitions

@@ -25,8 +25,9 @@ from sklearn.metrics import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_INPUT = REPO_ROOT / "result/Diagnosis/SPE/spe_predictions.csv"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "result/Diagnosis/SPE/performance"
+DEFAULT_INPUT = (
+    REPO_ROOT / "result/Diagnosis/SPE/Internal/bacc/spe_predictions.csv"
+)
 METRIC_NAMES = (
     "accuracy",
     "balanced_accuracy",
@@ -54,7 +55,15 @@ def parse_args() -> argparse.Namespace:
             "when the prediction CSV has no center column."
         ),
     )
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Summary directory. Defaults to a performance directory beside "
+            "the prediction CSV."
+        ),
+    )
     parser.add_argument(
         "--threshold",
         type=float,
@@ -95,9 +104,35 @@ def atomic_json(payload: dict[str, Any], path: Path) -> None:
     temporary.replace(path)
 
 
+SLIDE_FILE_SUFFIXES = {
+    ".pt",
+    ".pth",
+    ".npy",
+    ".npz",
+    ".h5",
+    ".hdf5",
+    ".svs",
+    ".tif",
+    ".tiff",
+    ".ndpi",
+    ".mrxs",
+}
+
+
 def slide_id_from_value(value: object) -> str:
+    """Return a slide ID without discarding meaningful dotted suffixes.
+
+    Prediction CSVs already contain extensionless slide IDs.  Some external
+    cohorts use suffixes such as ``.1`` and ``.2`` to distinguish slides, so
+    applying ``Path.stem`` unconditionally would collapse different slides.
+    Strip only known feature/WSI filename extensions.
+    """
     normalized = str(value).strip().replace("\\", "/")
-    return PurePosixPath(normalized).stem
+    name = PurePosixPath(normalized).name
+    path = PurePosixPath(name)
+    if path.suffix.lower() in SLIDE_FILE_SUFFIXES:
+        return path.stem
+    return name
 
 
 def load_predictions(path: Path, threshold: float) -> pd.DataFrame:
@@ -335,7 +370,11 @@ def main() -> None:
         raise ValueError("--threshold must lie strictly between 0 and 1.")
     if args.bootstrap_iterations < 1:
         raise ValueError("--bootstrap-iterations must be at least 1.")
-    output_dir = resolve_path(args.output_dir)
+    output_dir = (
+        prediction_path.parent / "performance"
+        if args.output_dir is None
+        else resolve_path(args.output_dir)
+    )
     frame = load_predictions(prediction_path, threshold)
 
     overall = grouped_summary(

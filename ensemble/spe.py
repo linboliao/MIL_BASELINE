@@ -107,6 +107,41 @@ class BalancedAccuracySelection:
 
 
 @dataclass(frozen=True)
+class Top1AnchorFallbackSelection:
+    """Risk-controlled Top1-anchored ensemble selected on development OOF data."""
+
+    candidate_names: tuple[str, ...]
+    anchor_name: str
+    proposed_selected_names: tuple[str, ...]
+    deployed_names: tuple[str, ...]
+    individual_balanced_accuracies: tuple[float, ...]
+    proposed_weights: tuple[float, ...]
+    deployed_weights: tuple[float, ...]
+    anchor_min_weight: float
+    anchor_balanced_accuracy: float
+    ensemble_balanced_accuracy: float
+    balanced_accuracy_gain: float
+    min_oof_bacc_gain: float
+    non_decreasing_folds: int
+    min_non_decreasing_folds: int
+    fallback_triggered: bool
+    fallback_reasons: tuple[str, ...]
+    fold_diagnostics: tuple[dict, ...]
+    steps: tuple[dict, ...]
+
+    @property
+    def selected_names(self) -> tuple[str, ...]:
+        """Names actually deployed after applying the automatic guardrail."""
+        return self.deployed_names
+
+    def as_dict(self) -> dict:
+        values = asdict(self)
+        values["selected_names"] = self.selected_names
+        values["strategy"] = "top1_anchor_with_automatic_fallback"
+        return values
+
+
+@dataclass(frozen=True)
 class DiversityVetoSelection:
     """OOF-only selection for a specificity-oriented two-member ensemble."""
 
@@ -1015,6 +1050,293 @@ def select_architectures_for_balanced_accuracy(
         ),
         steps=tuple(steps),
     )
+
+
+def select_top1_anchor_with_fallback(
+    probabilities: np.ndarray,
+    labels: Sequence,
+    patient_ids: Sequence,
+    fold_ids: Sequence,
+    architecture_names: Sequence[str],
+    diversity_lambda: float = 0.05,
+    classification_threshold: float = 0.5,
+    anchor_min_weight: float = 0.70,
+    weight_grid_step: float = 0.01,
+    min_members: int = 2,
+    max_members: int = 3,
+    min_cv_member_improvement: float = 0.0,
+    max_individual_bacc_gap: float | None = 0.05,
+    min_oof_bacc_gain: float = 0.005,
+    min_non_decreasing_folds: int = 4,
+    fold_tolerance: float = 0.0,
+) -> tuple[Top1AnchorFallbackSelection, np.ndarray, np.ndarray]:
+    """Select a small Top1-anchored ensemble and fall back when it is unstable.
+
+    The best individual development OOF architecture is the immutable anchor.
+    Every fold-held-out candidate blend reserves at least ``anchor_min_weight``
+    for that anchor.  Complementary members share only the remaining risk
+    budget.  The proposed blend is deployed only when its pooled OOF BAcc gain
+    and its number of non-decreasing folds both satisfy locked guardrails.
+
+    Returns the diagnostics, the probability used for OOF reporting after the
+    fallback decision, and the proposed cross-fitted ensemble probability.
+    """
+    probabilities = _validate_probabilities(probabilities)
+    labels_array = _as_1d(labels, "labels")
+    patients = np.asarray(patient_ids, dtype=str)
+    folds = np.asarray(fold_ids)
+    names = tuple(str(name) for name in architecture_names)
+    sample_count, architecture_count = probabilities.shape
+
+    if any(len(values) != sample_count for values in (labels_array, patients, folds)):
+        raise ValueError("Labels/patient IDs/fold IDs do not match probability rows.")
+    if len(names) != architecture_count or len(set(names)) != architecture_count:
+        raise ValueError("architecture_names must uniquely match probability columns.")
+    if not np.isin(labels_array, [0.0, 1.0]).all():
+        raise ValueError("Top1-anchor selection requires binary labels 0/1.")
+    if not 0.0 < classification_threshold < 1.0:
+        raise ValueError("classification_threshold must lie strictly between 0 and 1.")
+    if not 0.5 <= anchor_min_weight <= 1.0:
+        raise ValueError("anchor_min_weight must lie in [0.5, 1.0].")
+    if anchor_min_weight < 1.0 and not (
+        0.0 < weight_grid_step <= 1.0 - anchor_min_weight
+    ):
+        raise ValueError(
+            "weight_grid_step must be positive and no larger than the complement budget."
+        )
+    if min_members < 1 or min_members > architecture_count:
+        raise ValueError("min_members must be between 1 and the candidate count.")
+    if max_members < min_members or max_members > architecture_count:
+        raise ValueError("max_members must be between min_members and candidate count.")
+    if max_members > 3:
+        raise ValueError("Top1-anchor grid search supports at most three members.")
+    if min_cv_member_improvement < 0 or min_oof_bacc_gain < 0:
+        raise ValueError("BAcc improvement requirements must be non-negative.")
+    if max_individual_bacc_gap is not None and max_individual_bacc_gap < 0:
+        raise ValueError("max_individual_bacc_gap must be non-negative or null.")
+    unique_folds = np.unique(folds)
+    if len(unique_folds) < 2:
+        raise ValueError("Top1-anchor selection requires at least two OOF folds.")
+    if not 1 <= min_non_decreasing_folds <= len(unique_folds):
+        raise ValueError(
+            "min_non_decreasing_folds must be between 1 and the OOF fold count."
+        )
+    patient_fold_counts = np.asarray(
+        [len(np.unique(folds[patients == patient])) for patient in np.unique(patients)]
+    )
+    if (patient_fold_counts > 1).any():
+        raise ValueError("A patient cannot occur in more than one OOF fold.")
+
+    individual_scores = np.asarray(
+        [
+            _balanced_accuracy(
+                labels_array, probabilities[:, index], classification_threshold
+            )
+            for index in range(architecture_count)
+        ]
+    )
+    anchor = min(
+        range(architecture_count),
+        key=lambda index: (-individual_scores[index], names[index]),
+    )
+    anchor_probability = probabilities[:, anchor].copy()
+    anchor_score = float(individual_scores[anchor])
+
+    eligible = [index for index in range(architecture_count) if index != anchor]
+    if max_individual_bacc_gap is not None:
+        eligible = [
+            index
+            for index in eligible
+            if individual_scores[index] >= anchor_score - max_individual_bacc_gap
+        ]
+
+    def anchored_weights(
+        indices: tuple[int, ...], training_mask: np.ndarray
+    ) -> np.ndarray:
+        weights = np.zeros(architecture_count, dtype=np.float64)
+        if len(indices) == 1 or anchor_min_weight == 1.0:
+            weights[anchor] = 1.0
+            return weights
+        # BAcc is discontinuous, so use a small deterministic grid over the
+        # at-most-30% complement budget. Log loss plus residual similarity is
+        # only a tie-breaker; it cannot trade away the primary endpoint.
+        complement_indices = tuple(index for index in indices if index != anchor)
+        residual_budget = 1.0 - anchor_min_weight
+        budget_units = max(1, int(round(residual_budget / weight_grid_step)))
+        actual_step = residual_budget / budget_units
+        train_probabilities = probabilities[training_mask]
+        train_labels = labels_array[training_mask]
+        train_patients = patients[training_mask]
+        sample_weights = class_patient_equal_sample_weights(
+            train_labels, train_patients
+        )
+        subset_similarity = residual_similarity_matrix(
+            train_probabilities[:, indices], train_labels, sample_weights
+        )
+        best_key = None
+        best_weights = None
+        for allocation in np.ndindex(
+            *((budget_units + 1,) * len(complement_indices))
+        ):
+            if sum(allocation) > budget_units:
+                continue
+            candidate = np.zeros(architecture_count, dtype=np.float64)
+            for index, units in zip(complement_indices, allocation):
+                candidate[index] = units * actual_step
+            candidate[anchor] = 1.0 - float(candidate.sum())
+            candidate_probability = train_probabilities @ candidate
+            bacc = _balanced_accuracy(
+                train_labels, candidate_probability, classification_threshold
+            )
+            subset_weights = candidate[np.asarray(indices, dtype=int)]
+            tie_objective = _weighted_log_loss(
+                candidate_probability, train_labels, sample_weights
+            ) + diversity_lambda * float(
+                subset_weights @ subset_similarity @ subset_weights
+            )
+            # Prefer higher BAcc, then lower smooth objective, then a larger
+            # anchor share when two solutions are otherwise equivalent.
+            key = (-float(bacc), float(tie_objective), -candidate[anchor], allocation)
+            if best_key is None or key < best_key:
+                best_key = key
+                best_weights = candidate
+        if best_weights is None:
+            raise AssertionError("Top1-anchor weight grid produced no candidates.")
+        return best_weights
+
+    score_cache: dict[tuple[int, ...], tuple[float, np.ndarray]] = {}
+
+    def cross_fitted_score(indices: Sequence[int]) -> tuple[float, np.ndarray]:
+        ordered = (anchor, *sorted(index for index in indices if index != anchor))
+        if ordered in score_cache:
+            return score_cache[ordered]
+        cross_fitted = np.empty(sample_count, dtype=np.float64)
+        for held_out_fold in unique_folds:
+            held_out_mask = folds == held_out_fold
+            training_mask = ~held_out_mask
+            weights = anchored_weights(ordered, training_mask)
+            cross_fitted[held_out_mask] = probabilities[held_out_mask] @ weights
+        score = _balanced_accuracy(
+            labels_array, cross_fitted, classification_threshold
+        )
+        score_cache[ordered] = (float(score), cross_fitted)
+        return score_cache[ordered]
+
+    selected = [anchor]
+    current_score = anchor_score
+    steps: list[dict] = [
+        {
+            "step": 1,
+            "added": names[anchor],
+            "cross_validated_balanced_accuracy": anchor_score,
+            "improvement": None,
+            "role": "anchor",
+        }
+    ]
+    while len(selected) < max_members:
+        remaining = [index for index in eligible if index not in selected]
+        if not remaining:
+            break
+        scored = []
+        for index in remaining:
+            score, _ = cross_fitted_score([*selected, index])
+            scored.append((score, names[index], index))
+        candidate_score, _, candidate = min(
+            scored, key=lambda item: (-item[0], item[1])
+        )
+        improvement = candidate_score - current_score
+        if len(selected) >= min_members and improvement < min_cv_member_improvement:
+            break
+        selected.append(candidate)
+        current_score = candidate_score
+        steps.append(
+            {
+                "step": len(selected),
+                "added": names[candidate],
+                "cross_validated_balanced_accuracy": float(current_score),
+                "improvement": float(improvement),
+                "role": "complement",
+            }
+        )
+
+    selected_tuple = (anchor, *sorted(index for index in selected if index != anchor))
+    ensemble_score, proposed_oof_probability = cross_fitted_score(selected_tuple)
+    fold_diagnostics: list[dict] = []
+    non_decreasing_folds = 0
+    for fold in unique_folds:
+        mask = folds == fold
+        fold_anchor = _balanced_accuracy(
+            labels_array[mask], anchor_probability[mask], classification_threshold
+        )
+        fold_ensemble = _balanced_accuracy(
+            labels_array[mask], proposed_oof_probability[mask], classification_threshold
+        )
+        non_decreasing = bool(
+            np.isfinite(fold_anchor)
+            and np.isfinite(fold_ensemble)
+            and fold_ensemble + fold_tolerance >= fold_anchor
+        )
+        non_decreasing_folds += int(non_decreasing)
+        fold_diagnostics.append(
+            {
+                "fold": int(fold) if np.issubdtype(type(fold), np.integer) else str(fold),
+                "anchor_balanced_accuracy": float(fold_anchor),
+                "ensemble_balanced_accuracy": float(fold_ensemble),
+                "gain": float(fold_ensemble - fold_anchor),
+                "non_decreasing": non_decreasing,
+            }
+        )
+
+    gain = float(ensemble_score - anchor_score)
+    fallback_reasons = []
+    if gain + 1e-12 < min_oof_bacc_gain:
+        fallback_reasons.append(
+            f"OOF BAcc gain {gain:.6f} < required {min_oof_bacc_gain:.6f}"
+        )
+    if non_decreasing_folds < min_non_decreasing_folds:
+        fallback_reasons.append(
+            f"non-decreasing folds {non_decreasing_folds} < required "
+            f"{min_non_decreasing_folds}"
+        )
+    if len(selected_tuple) < min_members:
+        fallback_reasons.append(
+            f"eligible members {len(selected_tuple)} < required {min_members}"
+        )
+    fallback_triggered = bool(fallback_reasons)
+
+    full_mask = np.ones(sample_count, dtype=bool)
+    proposed_weights = anchored_weights(selected_tuple, full_mask)
+    deployed_weights = proposed_weights.copy()
+    if fallback_triggered:
+        deployed_weights.fill(0.0)
+        deployed_weights[anchor] = 1.0
+        deployed_names = (names[anchor],)
+        deployed_oof_probability = anchor_probability
+    else:
+        deployed_names = tuple(names[index] for index in selected_tuple)
+        deployed_oof_probability = proposed_oof_probability
+
+    result = Top1AnchorFallbackSelection(
+        candidate_names=names,
+        anchor_name=names[anchor],
+        proposed_selected_names=tuple(names[index] for index in selected_tuple),
+        deployed_names=deployed_names,
+        individual_balanced_accuracies=tuple(float(value) for value in individual_scores),
+        proposed_weights=tuple(float(value) for value in proposed_weights),
+        deployed_weights=tuple(float(value) for value in deployed_weights),
+        anchor_min_weight=float(anchor_min_weight),
+        anchor_balanced_accuracy=anchor_score,
+        ensemble_balanced_accuracy=float(ensemble_score),
+        balanced_accuracy_gain=gain,
+        min_oof_bacc_gain=float(min_oof_bacc_gain),
+        non_decreasing_folds=int(non_decreasing_folds),
+        min_non_decreasing_folds=int(min_non_decreasing_folds),
+        fallback_triggered=fallback_triggered,
+        fallback_reasons=tuple(fallback_reasons),
+        fold_diagnostics=tuple(fold_diagnostics),
+        steps=tuple(steps),
+    )
+    return result, deployed_oof_probability, proposed_oof_probability
 
 
 def select_diversity_veto(

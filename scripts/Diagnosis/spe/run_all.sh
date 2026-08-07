@@ -77,41 +77,50 @@ CUDA_VISIBLE_DEVICES=0 python -u scripts/Diagnosis/spe/test_best_checkpoints.py 
 CUDA_VISIBLE_DEVICES=0 python -u scripts/Diagnosis/spe/test_best_checkpoints.py --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --target-name external --device cuda:0 --configs configs/Diagnosis/MIL/MAX_MIL.yaml
 
 # =============================================================================
-# 4. Internal SPE v3-v7
+# 4. Internal SPE
 # =============================================================================
 
 python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml --preflight
 CUDA_VISIBLE_DEVICES=1,3,4,7 python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml --devices cuda:0,cuda:1,cuda:2,cuda:3
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v3_bacc/spe_predictions.csv --output-dir result/Diagnosis/SPE/v3_bacc/performance --bootstrap-iterations 2000 --skip-center
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/Internal/bacc/spe_predictions.csv --bootstrap-iterations 2000 --skip-center
 
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/diversity_veto.yaml --refit-from result/Diagnosis/SPE/v3_bacc
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v4_diversity_veto/spe_predictions.csv --output-dir result/Diagnosis/SPE/v4_diversity_veto/performance --bootstrap-iterations 2000 --skip-center
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/diversity_veto.yaml --refit-from result/Diagnosis/SPE/Internal/bacc
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/Internal/diversity_veto/spe_predictions.csv --bootstrap-iterations 2000 --skip-center
 
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/sensitivity_constrained.yaml --refit-from result/Diagnosis/SPE/v3_bacc
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v5_sensitivity_constrained/spe_predictions.csv --output-dir result/Diagnosis/SPE/v5_sensitivity_constrained/performance --bootstrap-iterations 2000 --skip-center
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/sensitivity_constrained.yaml --refit-from result/Diagnosis/SPE/Internal/bacc
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/Internal/sensitivity_constrained/spe_predictions.csv --bootstrap-iterations 2000 --skip-center
 
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/constrained_linear_stacking.yaml --refit-from result/Diagnosis/SPE/v3_bacc
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v6_constrained_linear_stacking/spe_predictions.csv --output-dir result/Diagnosis/SPE/v6_constrained_linear_stacking/performance --bootstrap-iterations 2000 --skip-center
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/constrained_linear_stacking.yaml --refit-from result/Diagnosis/SPE/Internal/bacc
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/Internal/constrained_linear_stacking/spe_predictions.csv --bootstrap-iterations 2000 --skip-center
 
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/ra_spe.yaml --refit-from result/Diagnosis/SPE/v3_bacc
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v7_ra_spe/spe_predictions.csv --output-dir result/Diagnosis/SPE/v7_ra_spe/performance --bootstrap-iterations 2000 --skip-center
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/ra_spe.yaml --refit-from result/Diagnosis/SPE/Internal/bacc
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/Internal/ra_spe/spe_predictions.csv --bootstrap-iterations 2000 --skip-center
+
+# Best-state + Top1 anchor + automatic OOF fallback. This is a separate
+# prediction pool because it must use exactly one Best_EPOCH per fold.
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/best_state_anchor.yaml --preflight
+CUDA_VISIBLE_DEVICES=5,6,7 python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/best_state_anchor.yaml --devices cuda:0,cuda:1,cuda:2
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/Internal/best_state_anchor/spe_predictions.csv --bootstrap-iterations 2000 --skip-center
 
 # =============================================================================
-# 5. External SPE v3-v7
+# 5. External SPE
 # =============================================================================
 
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name v3_bacc_external --preflight
-CUDA_VISIBLE_DEVICES=1,3,4,7 python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name v3_bacc_external --devices cuda:0,cuda:1,cuda:2,cuda:3
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v3_bacc_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-dir result/Diagnosis/SPE/v3_bacc_external/performance --bootstrap-iterations 2000
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name bacc_external --preflight
+CUDA_VISIBLE_DEVICES=1,3,4,7 python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name bacc_external --devices cuda:0,cuda:1,cuda:2,cuda:3
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/External/bacc_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --bootstrap-iterations 2000
 
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/diversity_veto.yaml --refit-from result/Diagnosis/SPE/v3_bacc_external --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name v4_diversity_veto_external
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v4_diversity_veto_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-dir result/Diagnosis/SPE/v4_diversity_veto_external/performance --bootstrap-iterations 2000
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/diversity_veto.yaml --refit-from result/Diagnosis/SPE/External/bacc_external --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name diversity_veto_external
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/External/diversity_veto_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --bootstrap-iterations 2000
 
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/sensitivity_constrained.yaml --refit-from result/Diagnosis/SPE/v3_bacc_external --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name v5_sensitivity_constrained_external
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v5_sensitivity_constrained_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-dir result/Diagnosis/SPE/v5_sensitivity_constrained_external/performance --bootstrap-iterations 2000
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/sensitivity_constrained.yaml --refit-from result/Diagnosis/SPE/External/bacc_external --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name sensitivity_constrained_external
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/External/sensitivity_constrained_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --bootstrap-iterations 2000
 
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/constrained_linear_stacking.yaml --refit-from result/Diagnosis/SPE/v3_bacc_external --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name v6_constrained_linear_stacking_external
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v6_constrained_linear_stacking_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-dir result/Diagnosis/SPE/v6_constrained_linear_stacking_external/performance --bootstrap-iterations 2000
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/constrained_linear_stacking.yaml --refit-from result/Diagnosis/SPE/External/bacc_external --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name constrained_linear_stacking_external
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/External/constrained_linear_stacking_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --bootstrap-iterations 2000
 
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/ra_spe.yaml --refit-from result/Diagnosis/SPE/v3_bacc_external --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name v7_ra_spe_external
-python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/v7_ra_spe_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-dir result/Diagnosis/SPE/v7_ra_spe_external/performance --bootstrap-iterations 2000
+python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/ra_spe.yaml --refit-from result/Diagnosis/SPE/External/bacc_external --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name ra_spe_external
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/External/ra_spe_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --bootstrap-iterations 2000
+
+CUDA_VISIBLE_DEVICES=5,6,7 python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/best_state_anchor.yaml --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --output-name best_state_anchor_external --devices cuda:0,cuda:1,cuda:2
+python -u scripts/Diagnosis/spe/summarize_performance.py --predictions result/Diagnosis/SPE/External/best_state_anchor_external/spe_predictions.csv --center-metadata datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv --bootstrap-iterations 2000
