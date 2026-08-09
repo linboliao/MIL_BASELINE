@@ -1,5 +1,22 @@
 # Hierarchical SPE
 
+## Variants
+
+All variants use the readable `run.py --variant NAME` entrypoint. Shared
+inference, cache, OOF merge, and output logic remains isolated in `_engine.py`.
+
+| Variant | Configuration |
+|---|---|
+| `hierarchical_bacc` | `hierarchical_spe.yaml` |
+| `macro_f1` | `hierarchical_spe_macro_f1.yaml` |
+| `hierarchical_v1` | `hierarchical_spe_v1.yaml` |
+| `best_state_anchor` | `best_state_anchor.yaml` |
+| `best_state_anchor_v1` | `best_state_anchor_v1.yaml` |
+| `constrained_linear_stacking` | `constrained_linear_stacking.yaml` |
+| `ra_spe` | `ra_spe.yaml` |
+| `diversity_veto` | `diversity_veto.yaml` |
+| `sensitivity_constrained` | `sensitivity_constrained.yaml` |
+
 ## Best-state + Top1-anchor + automatic fallback
 
 `best_state_anchor.yaml` is a risk-controlled alternative to the manuscript
@@ -23,10 +40,9 @@ GDF replaces Gumbel sampling with the corresponding softmax in evaluation, so
 the Best-state baseline and this ensemble see reproducible member predictions.
 
 ```bash
-python -u scripts/Diagnosis/spe/run.py \
-  --spe-config configs/Diagnosis/SPE/best_state_anchor.yaml --preflight
+python -u scripts/Diagnosis/spe/run.py --variant best_state_anchor --preflight
 CUDA_VISIBLE_DEVICES=5,6,7 python -u scripts/Diagnosis/spe/run.py \
-  --spe-config configs/Diagnosis/SPE/best_state_anchor.yaml \
+  --variant best_state_anchor \
   --devices cuda:0,cuda:1,cuda:2
 python -u scripts/Diagnosis/spe/summarize_performance.py \
   --predictions result/Diagnosis/SPE/Internal/best_state_anchor/spe_predictions.csv \
@@ -37,10 +53,35 @@ For the external cohort, run inference with the same YAML and locked OOF rule:
 
 ```bash
 CUDA_VISIBLE_DEVICES=5,6,7 python -u scripts/Diagnosis/spe/run.py \
-  --spe-config configs/Diagnosis/SPE/best_state_anchor.yaml \
+  --variant best_state_anchor \
   --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv \
   --output-name best_state_anchor_external --devices cuda:0,cuda:1,cuda:2
 ```
+
+The legacy 11-member patient-disjoint candidate pool has a separate compatible
+configuration, `best_state_anchor_v1.yaml`. It reuses the same implementation
+but keeps the original 11 members and latest-complete-run discovery. The former
+`MIL_PatientDisjoint` cohort is now `datasets/Diagnosis/MIL` in this workspace.
+Its output is written to
+`result/Diagnosis/SPE/Internal/best_state_anchor_v1/`.
+
+## Macro-F1 hierarchical SPE
+
+`hierarchical_spe_macro_f1.yaml` keeps the legacy 11-architecture hierarchy
+but makes macro F1 the explicit development endpoint. Stable states come from
+`val_macro_f1`; architecture membership is forward-selected by pooled
+five-fold held-out macro F1 at threshold 0.5. The inner continuous weight fit
+uses class/patient-balanced BCE because thresholded macro F1 is not
+differentiable. Independent-test labels are never used for either step.
+
+```bash
+python -u scripts/Diagnosis/spe/run.py --variant macro_f1 --preflight
+python -u scripts/Diagnosis/spe/run.py --variant macro_f1 \
+  --devices cuda:0,cuda:1,cuda:2
+```
+
+The output manifest records `development_oof_macro_f1`, and
+`architecture_weights.csv` includes each candidate's `oof_macro_f1`.
 
 This directory configures the manuscript's Stability-Prioritized Ensemble:
 
@@ -70,23 +111,16 @@ General:
 Run on Linux after all five folds of all configured architectures have completed:
 
 ```bash
-python -u scripts/Diagnosis/spe/run.py --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml --preflight
-bash scripts/Diagnosis/spe/run.sh
+python -u scripts/Diagnosis/spe/run.py --variant hierarchical_bacc --preflight
+python -u scripts/Diagnosis/spe/run.py --variant hierarchical_bacc \
+  --devices cuda:0,cuda:1,cuda:2,cuda:3
 ```
 
 For architecture-level multi-GPU inference, assign one worker process to each
 visible GPU either from the command line:
 
 ```bash
-python -u scripts/Diagnosis/spe/run.py \
-  --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml \
-  --devices cuda:0,cuda:1,cuda:2,cuda:3
-```
-
-The shell wrapper also forwards arguments:
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/Diagnosis/spe/run.sh \
+python -u scripts/Diagnosis/spe/run.py --variant hierarchical_bacc \
   --devices cuda:0,cuda:1,cuda:2,cuda:3
 ```
 
@@ -94,8 +128,7 @@ When checkpoint and fold predictions already exist under the same checkpoint
 policy, selection and weighting can be rebuilt without model inference:
 
 ```bash
-python -u scripts/Diagnosis/spe/run.py \
-  --spe-config configs/Diagnosis/SPE/hierarchical_spe.yaml \
+python -u scripts/Diagnosis/spe/run.py --variant hierarchical_bacc \
   --refit-from result/Diagnosis/SPE/Internal/bacc
 ```
 
@@ -110,8 +143,7 @@ global non-negative weight vector. It adds shrinkage toward uniform weights, a
 per-architecture cap, and a minimum effective-member constraint:
 
 ```bash
-python -u scripts/Diagnosis/spe/run.py \
-  --spe-config configs/Diagnosis/SPE/constrained_linear_stacking.yaml \
+python -u scripts/Diagnosis/spe/run.py --variant constrained_linear_stacking \
   --refit-from result/Diagnosis/SPE/Internal/bacc
 ```
 
@@ -123,8 +155,7 @@ without those member files falls back to probability, entropy, and
 inter-architecture disagreement features:
 
 ```bash
-python -u scripts/Diagnosis/spe/run.py \
-  --spe-config configs/Diagnosis/SPE/ra_spe.yaml \
+python -u scripts/Diagnosis/spe/run.py --variant ra_spe \
   --refit-from result/Diagnosis/SPE/Internal/bacc
 ```
 
@@ -138,8 +169,7 @@ To lock sensitivity to the BAcc development reference and optimize specificity
 and BAcc over equal-weight architecture subsets, use:
 
 ```bash
-python -u scripts/Diagnosis/spe/run.py \
-  --spe-config configs/Diagnosis/SPE/sensitivity_constrained.yaml \
+python -u scripts/Diagnosis/spe/run.py --variant sensitivity_constrained \
   --refit-from result/Diagnosis/SPE/Internal/bacc
 ```
 

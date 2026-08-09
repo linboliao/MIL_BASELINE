@@ -13,7 +13,7 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.Diagnosis.spe.run import patient_id_from_slide
+from scripts.Diagnosis.spe._engine import patient_id_from_slide
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,7 +72,7 @@ def main() -> None:
         if not args.allow_overlap:
             raise SystemExit(
                 "External/internal patient overlap detected. Create a patient-disjoint "
-                "external CSV or explicitly set ALLOW_COHORT_OVERLAP=1 for a non-paper run."
+                "external CSV or pass --allow-overlap for a non-paper diagnostic run."
             )
 
 

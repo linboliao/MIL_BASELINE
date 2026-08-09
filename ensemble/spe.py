@@ -107,6 +107,24 @@ class BalancedAccuracySelection:
 
 
 @dataclass(frozen=True)
+class MacroF1Selection:
+    """Fold-held-out architecture selection driven by binary macro F1."""
+
+    candidate_names: tuple[str, ...]
+    eligible_names: tuple[str, ...]
+    selected_names: tuple[str, ...]
+    individual_macro_f1_scores: tuple[float, ...]
+    cross_validated_macro_f1: float
+    classification_threshold: float
+    min_cv_improvement: float
+    max_individual_macro_f1_gap: float | None
+    steps: tuple[dict, ...]
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class Top1AnchorFallbackSelection:
     """Risk-controlled Top1-anchored ensemble selected on development OOF data."""
 
@@ -891,6 +909,215 @@ def _balanced_accuracy(
     sensitivity = float(predictions[positive].mean())
     specificity = float((~predictions[negative]).mean())
     return (sensitivity + specificity) / 2.0
+
+
+def binary_macro_f1(
+    labels: Sequence,
+    probabilities: Sequence,
+    threshold: float = 0.5,
+) -> float:
+    """Return the unweighted mean of class-0 and class-1 F1 scores.
+
+    Both classes are always included, matching ``sklearn.metrics.f1_score``
+    with ``labels=[0, 1], average="macro", zero_division=0``. This explicit
+    implementation keeps SPE's core math independent of scikit-learn.
+    """
+    labels_array = _as_1d(labels, "labels")
+    probabilities_array = _as_1d(probabilities, "probabilities")
+    if len(labels_array) != len(probabilities_array):
+        raise ValueError("Labels and probabilities must have the same length.")
+    if not np.isin(labels_array, [0.0, 1.0]).all():
+        raise ValueError("Macro-F1 requires binary labels 0/1.")
+    if not np.isfinite(probabilities_array).all():
+        raise ValueError("probabilities contain NaN or infinite values.")
+    if ((probabilities_array < 0.0) | (probabilities_array > 1.0)).any():
+        raise ValueError("probabilities must lie in [0, 1].")
+    if not 0.0 < threshold < 1.0:
+        raise ValueError("threshold must lie strictly between 0 and 1.")
+
+    predictions = (probabilities_array >= threshold).astype(np.int8)
+    scores: list[float] = []
+    for class_id in (0, 1):
+        true_positive = int(
+            np.sum((predictions == class_id) & (labels_array == class_id))
+        )
+        false_positive = int(
+            np.sum((predictions == class_id) & (labels_array != class_id))
+        )
+        false_negative = int(
+            np.sum((predictions != class_id) & (labels_array == class_id))
+        )
+        denominator = 2 * true_positive + false_positive + false_negative
+        scores.append(0.0 if denominator == 0 else 2 * true_positive / denominator)
+    return float(np.mean(scores))
+
+
+def select_architectures_for_macro_f1(
+    probabilities: np.ndarray,
+    labels: Sequence,
+    patient_ids: Sequence,
+    fold_ids: Sequence,
+    architecture_names: Sequence[str],
+    diversity_lambda: float = 0.05,
+    classification_threshold: float = 0.5,
+    min_members: int = 1,
+    max_members: int | None = None,
+    min_cv_improvement: float = 1e-3,
+    max_individual_macro_f1_gap: float | None = 0.10,
+    max_iterations: int = 5000,
+    tolerance: float = 1e-10,
+) -> MacroF1Selection:
+    """Forward-select members using fold-held-out development macro F1.
+
+    For each candidate subset, architecture weights are fitted on four OOF
+    folds with class/patient-balanced BCE and applied to the untouched fifth
+    fold. The pooled cross-fitted predictions are scored by macro F1 at the
+    fixed classification threshold. Independent-test data never enter this
+    procedure.
+    """
+    probabilities = _validate_probabilities(probabilities)
+    labels_array = _as_1d(labels, "labels")
+    patients = np.asarray(patient_ids, dtype=str)
+    folds = np.asarray(fold_ids)
+    names = tuple(str(name) for name in architecture_names)
+    sample_count, architecture_count = probabilities.shape
+
+    if any(len(values) != sample_count for values in (labels_array, patients, folds)):
+        raise ValueError("Labels/patient IDs/fold IDs do not match probability rows.")
+    if len(names) != architecture_count or len(set(names)) != architecture_count:
+        raise ValueError("architecture_names must uniquely match probability columns.")
+    if not np.isin(labels_array, [0.0, 1.0]).all():
+        raise ValueError("Macro-F1 selection requires binary labels 0/1.")
+    if not 0.0 < classification_threshold < 1.0:
+        raise ValueError("classification_threshold must lie strictly between 0 and 1.")
+    unique_folds = np.unique(folds)
+    if len(unique_folds) < 2:
+        raise ValueError("Architecture selection requires at least two OOF folds.")
+    patient_fold_counts = np.asarray(
+        [len(np.unique(folds[patients == patient])) for patient in np.unique(patients)]
+    )
+    if (patient_fold_counts > 1).any():
+        raise ValueError("A patient cannot occur in more than one OOF fold.")
+    if min_members < 1 or min_members > architecture_count:
+        raise ValueError("min_members must be between 1 and the candidate count.")
+    if max_members is None:
+        max_members = architecture_count
+    if max_members < min_members or max_members > architecture_count:
+        raise ValueError("max_members must be between min_members and candidate count.")
+    if min_cv_improvement < 0:
+        raise ValueError("min_cv_improvement must be non-negative.")
+    if (
+        max_individual_macro_f1_gap is not None
+        and max_individual_macro_f1_gap < 0
+    ):
+        raise ValueError(
+            "max_individual_macro_f1_gap must be non-negative or null."
+        )
+
+    individual_scores = np.asarray(
+        [
+            binary_macro_f1(
+                labels_array,
+                probabilities[:, index],
+                classification_threshold,
+            )
+            for index in range(architecture_count)
+        ]
+    )
+    best_individual = float(individual_scores.max())
+    eligible_mask = individual_scores > 0.0
+    if max_individual_macro_f1_gap is not None:
+        eligible_mask &= (
+            individual_scores >= best_individual - max_individual_macro_f1_gap
+        )
+    eligible = [index for index in range(architecture_count) if eligible_mask[index]]
+    if len(eligible) < min_members:
+        raise ValueError(
+            f"Only {len(eligible)} architectures passed the macro-F1 gate, fewer "
+            f"than selection.min_members={min_members}."
+        )
+
+    score_cache: dict[tuple[int, ...], float] = {}
+
+    def cross_validated_score(indices: Sequence[int]) -> float:
+        key = tuple(sorted(indices))
+        if key in score_cache:
+            return score_cache[key]
+        cross_fitted = np.empty(sample_count, dtype=np.float64)
+        sub_probabilities = probabilities[:, key]
+        for fold in unique_folds:
+            validation_mask = folds == fold
+            training_mask = ~validation_mask
+            fit, _ = fit_architecture_weights(
+                sub_probabilities[training_mask],
+                labels_array[training_mask],
+                patients[training_mask],
+                architecture_names=[names[index] for index in key],
+                diversity_lambda=diversity_lambda,
+                max_iterations=max_iterations,
+                tolerance=tolerance,
+                class_balance=True,
+            )
+            cross_fitted[validation_mask] = (
+                sub_probabilities[validation_mask] @ np.asarray(fit.weights)
+            )
+        score = binary_macro_f1(
+            labels_array, cross_fitted, classification_threshold
+        )
+        score_cache[key] = score
+        return score
+
+    first = min(eligible, key=lambda index: (-individual_scores[index], names[index]))
+    selected = [first]
+    current_score = cross_validated_score(selected)
+    steps: list[dict] = [
+        {
+            "step": 1,
+            "added": names[first],
+            "cross_validated_macro_f1": current_score,
+            "improvement": None,
+        }
+    ]
+    while len(selected) < max_members:
+        remaining = [index for index in eligible if index not in selected]
+        if not remaining:
+            break
+        scored = [
+            (cross_validated_score([*selected, index]), names[index], index)
+            for index in remaining
+        ]
+        candidate_score, _, candidate = min(
+            scored, key=lambda item: (-item[0], item[1])
+        )
+        improvement = candidate_score - current_score
+        if len(selected) >= min_members and improvement < min_cv_improvement:
+            break
+        selected.append(candidate)
+        current_score = candidate_score
+        steps.append(
+            {
+                "step": len(selected),
+                "added": names[candidate],
+                "cross_validated_macro_f1": current_score,
+                "improvement": improvement,
+            }
+        )
+
+    return MacroF1Selection(
+        candidate_names=names,
+        eligible_names=tuple(names[index] for index in eligible),
+        selected_names=tuple(names[index] for index in selected),
+        individual_macro_f1_scores=tuple(float(value) for value in individual_scores),
+        cross_validated_macro_f1=float(current_score),
+        classification_threshold=float(classification_threshold),
+        min_cv_improvement=float(min_cv_improvement),
+        max_individual_macro_f1_gap=(
+            None
+            if max_individual_macro_f1_gap is None
+            else float(max_individual_macro_f1_gap)
+        ),
+        steps=tuple(steps),
+    )
 
 
 def select_architectures_for_balanced_accuracy(

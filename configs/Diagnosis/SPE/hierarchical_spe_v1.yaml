@@ -1,11 +1,11 @@
 experiment:
-  # BAcc-oriented base run; outputs are grouped under SPE/Internal or External.
-  name: bacc
+  name: hierarchical_spe_v1
   device: cuda:0
   num_workers: 0
   preload: false
   classification_threshold: 0.5
   development_dataset_root: datasets/Diagnosis/Stains/Reinhard
+  # MIL_PatientDisjoint was renamed to MIL in the current workspace.
   independent_test_dataset_root: datasets/Diagnosis/MIL
   output_root: result/Diagnosis/SPE
 
@@ -14,34 +14,19 @@ experiment:
 # This implementation fits on patient-equal OOF development predictions only:
 # binary cross-entropy + diversity_lambda * residual-correlation penalty.
 checkpoint_selection:
-  # Retain only checkpoints within 0.005 BAcc of each fold's best validation
-  # epoch, then spread at most five states across that high-performance band.
-  strategy: high_performance_band
-  metric: bacc
-  metric_tolerance: 0.005
-  max_checkpoints: 5
+  strategy: precomputed_stability
 
 aggregation:
   strategy: weighted_mean
 
 weighting:
   diversity_lambda: 0.05
-  # Balanced Accuracy is primary, so each class receives half of the fitting
-  # loss while slides from one patient still share that patient's influence.
-  class_balance: true
+  class_balance: false
   max_iterations: 5000
   tolerance: 1.0e-10
 
-# Candidate membership is locked from development OOF predictions before the
-# final weight fit. Forward selection refits on four folds and accepts a member
-# only when it improves patient-equal log loss on the held-out fold.
 selection:
-  enabled: true
-  objective: balanced_accuracy
-  min_members: 2
-  max_members: 6
-  min_cv_improvement: 0.001
-  max_individual_bacc_gap: 0.10
+  enabled: false
 
 # run_dir: null selects the latest complete five-fold run containing an SPE
 # checkpoint selection in every fold. Pin explicit run directories before the
@@ -79,13 +64,4 @@ architectures:
     run_dir: null
   - name: GDF_MIL
     config: configs/Diagnosis/MIL/GDF_MIL.yaml
-    run_dir: null
-  - name: RRT_MIL
-    config: configs/Diagnosis/MIL/RRT_MIL.yaml
-    run_dir: null
-  - name: DS_MIL
-    config: configs/Diagnosis/MIL/DS_MIL.yaml
-    run_dir: null
-  - name: DTFD_MIL
-    config: configs/Diagnosis/MIL/DTFD_MIL.yaml
     run_dir: null

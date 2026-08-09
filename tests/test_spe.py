@@ -11,6 +11,7 @@ import torch
 
 from ensemble.spe import (
     architecture_disagreement,
+    binary_macro_f1,
     class_patient_equal_sample_weights,
     fit_architecture_weights,
     fit_constrained_linear_stacking,
@@ -18,6 +19,7 @@ from ensemble.spe import (
     residual_similarity_matrix,
     select_architectures,
     select_architectures_for_balanced_accuracy,
+    select_architectures_for_macro_f1,
     select_diversity_veto,
     select_sensitivity_constrained_subset,
     select_top1_anchor_with_fallback,
@@ -246,6 +248,37 @@ class TestSPE(unittest.TestCase):
         )
         self.assertEqual(selection.selected_names, ("complement", "good"))
         self.assertNotIn("unsuitable", selection.eligible_names)
+
+    def test_binary_macro_f1_and_architecture_selection(self):
+        score = binary_macro_f1(
+            labels=[0, 0, 1, 1],
+            probabilities=[0.1, 0.8, 0.9, 0.7],
+            threshold=0.5,
+        )
+        self.assertAlmostEqual(score, (2 / 3 + 4 / 5) / 2)
+
+        labels = np.tile([0, 1], 20)
+        patients = np.array([f"p{index}" for index in range(len(labels))])
+        folds = np.repeat(np.arange(1, 6), 8)
+        good = np.where(labels == 1, 0.8, 0.2).astype(float)
+        good[::10] = 0.8
+        complement = np.where(labels == 1, 0.75, 0.25).astype(float)
+        complement[::10] = 0.05
+        unsuitable = 1.0 - np.where(labels == 1, 0.8, 0.2)
+        selection = select_architectures_for_macro_f1(
+            np.column_stack([good, complement, unsuitable]),
+            labels,
+            patients,
+            folds,
+            ["good", "complement", "unsuitable"],
+            min_members=2,
+            max_members=3,
+            min_cv_improvement=1e-4,
+            max_individual_macro_f1_gap=0.11,
+        )
+        self.assertEqual(selection.selected_names, ("complement", "good"))
+        self.assertNotIn("unsuitable", selection.eligible_names)
+        self.assertGreater(selection.cross_validated_macro_f1, 0.9)
 
     def test_diversity_veto_selects_accurate_anchor_and_complement(self):
         labels = np.tile([0, 1], 20)

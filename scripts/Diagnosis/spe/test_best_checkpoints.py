@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -21,7 +22,7 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.Diagnosis.spe.run import patient_id_from_slide
+from scripts.Diagnosis.spe._engine import patient_id_from_slide
 from scripts.Diagnosis.spe.summarize_performance import calculate_metrics
 from utils.yaml_utils import read_yaml
 
@@ -61,7 +62,7 @@ def atomic_csv(frame: pd.DataFrame, output_path: Path) -> None:
     temporary.replace(output_path)
 
 
-def atomic_json(payload: dict, output_path: Path) -> None:
+def atomic_json(payload: dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_suffix(output_path.suffix + ".tmp")
     temporary.write_text(
@@ -78,7 +79,7 @@ def fold_number(path: Path) -> int:
     return int(match.group(1))
 
 
-def test_fold_csvs(root: Path) -> dict[int, Path]:
+def discover_test_folds(root: Path) -> dict[int, Path]:
     paths = {
         fold_number(path): path
         for path in root.glob("*.csv")
@@ -102,7 +103,7 @@ def best_checkpoints(run_dir: Path) -> dict[int, Path]:
     return checkpoints
 
 
-def latest_complete_run(config) -> tuple[Path, dict[int, Path]]:
+def latest_complete_run(config: Any) -> tuple[Path, dict[int, Path]]:
     model_root = (
         resolve_path(config.Logs.log_root_dir)
         / str(config.Dataset.DATASET_NAME)
@@ -118,10 +119,13 @@ def latest_complete_run(config) -> tuple[Path, dict[int, Path]]:
             return candidate, best_checkpoints(candidate)
         except FileNotFoundError:
             continue
-    raise FileNotFoundError(f"No complete five-fold run found for {config.General.MODEL_NAME}: {model_root}")
+    raise FileNotFoundError(
+        f"No complete five-fold run found for {config.General.MODEL_NAME}: "
+        f"{model_root}"
+    )
 
 
-def test_metadata(dataset_csv: Path) -> pd.DataFrame:
+def load_test_metadata(dataset_csv: Path) -> pd.DataFrame:
     source = pd.read_csv(
         dataset_csv,
         dtype={"test_slide_path": "string", "test_type": "string", "center": "string"},
@@ -146,7 +150,8 @@ def test_metadata(dataset_csv: Path) -> pd.DataFrame:
         if "center" in frame.columns
         else pd.Series(pd.NA, index=frame.index, dtype="string")
     )
-    result = frame[["slide_id", "patient_id", "type", "center", "label"]].reset_index(drop=True)
+    columns = ["slide_id", "patient_id", "type", "center", "label"]
+    result = frame[columns].reset_index(drop=True)
     if result["slide_id"].duplicated().any():
         raise ValueError(f"Duplicate slide IDs in test cohort: {dataset_csv}")
     return result
@@ -161,7 +166,11 @@ def load_fold_prediction(path: Path, metadata: pd.DataFrame) -> pd.DataFrame:
     observed = frame[["slide_id", "label"]].copy()
     observed["label"] = observed["label"].astype(int)
     expected = metadata[["slide_id", "label"]].copy()
-    pd.testing.assert_frame_equal(observed.reset_index(drop=True), expected.reset_index(drop=True), check_dtype=False)
+    pd.testing.assert_frame_equal(
+        observed.reset_index(drop=True),
+        expected.reset_index(drop=True),
+        check_dtype=False,
+    )
     probabilities = frame["prob_1"].astype(float)
     if not probabilities.between(0.0, 1.0).all():
         raise ValueError(f"Invalid probabilities in {path}")
@@ -185,8 +194,8 @@ def main() -> None:
             raise FileNotFoundError(standalone)
         test_folds = {fold: standalone for fold in range(1, 6)}
     else:
-        test_folds = test_fold_csvs(resolve_path(args.test_dataset_root))
-    metadata = test_metadata(test_folds[1])
+        test_folds = discover_test_folds(resolve_path(args.test_dataset_root))
+    metadata = load_test_metadata(test_folds[1])
     output_root = resolve_path(args.output_root) / args.target_name
 
     summary_rows = []
@@ -260,7 +269,9 @@ def main() -> None:
         manifests[model_name] = {
             "config": str(config_path),
             "training_run": str(run_dir),
-            "checkpoints": {str(fold): str(path) for fold, path in checkpoints.items()},
+            "checkpoints": {
+                str(fold): str(path) for fold, path in checkpoints.items()
+            },
             "prediction_csv": str(prediction_output),
         }
 
@@ -285,7 +296,9 @@ def main() -> None:
     atomic_json(
         {
             "target": args.target_name,
-            "test_dataset_csvs": {str(fold): str(path) for fold, path in test_folds.items()},
+            "test_dataset_csvs": {
+                str(fold): str(path) for fold, path in test_folds.items()
+            },
             "threshold": args.threshold,
             "models": existing_models,
             "summary_csv": str(summary_path),
