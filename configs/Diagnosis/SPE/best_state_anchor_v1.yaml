@@ -1,0 +1,79 @@
+experiment:
+  # Patient-disjoint 11-member version of the risk-controlled ensemble.
+  name: best_state_anchor_v1
+  device: cuda:0
+  num_workers: 0
+  preload: false
+  classification_threshold: 0.5
+  development_dataset_root: datasets/Diagnosis/Stains/Reinhard
+  # The former datasets/Diagnosis/MIL_PatientDisjoint cohort is stored under
+  # datasets/Diagnosis/MIL in the current workspace (298 test slides/fold).
+  independent_test_dataset_root: datasets/Diagnosis/MIL
+  output_root: result/Diagnosis/SPE
+
+# Keep state-level inference identical to the direct baseline: use exactly the
+# single Best_EPOCH checkpoint from each architecture/fold.
+checkpoint_selection:
+  strategy: best_state
+
+weighting:
+  # Used only as the smooth tie-breaker when multiple anchored weight grids
+  # have the same development OOF Balanced Accuracy.
+  diversity_lambda: 0.05
+  class_balance: true
+
+aggregation:
+  strategy: top1_anchor_fallback
+  # Top1 keeps at least 70% probability mass. At most 30% can be assigned to
+  # complementary members, searched on a deterministic 0.01 grid.
+  anchor_min_weight: 0.70
+  weight_grid_step: 0.01
+  # Automatic deployment guardrails, locked using development OOF only.
+  min_oof_bacc_gain: 0.005
+  min_non_decreasing_folds: 4
+  fold_tolerance: 0.0
+
+selection:
+  # Top1 plus at most two complementary architectures.
+  min_members: 2
+  max_members: 3
+  min_cv_improvement: 0.001
+  max_individual_bacc_gap: 0.05
+
+# Preserve the original v1 behavior: null selects the latest complete
+# five-fold run with one Best_EPOCH per fold. Pin these paths before the final
+# locked paper experiment.
+architectures:
+  - name: AB_MIL
+    config: configs/Diagnosis/MIL/AB_MIL.yaml
+    run_dir: null
+  - name: CLAM_SB_MIL
+    config: configs/Diagnosis/MIL/CLAM_SB_MIL.yaml
+    run_dir: null
+  - name: CLAM_MB_MIL
+    config: configs/Diagnosis/MIL/CLAM_MB_MIL.yaml
+    run_dir: null
+  - name: TRANS_MIL
+    config: configs/Diagnosis/MIL/TRANS_MIL.yaml
+    run_dir: null
+  - name: WIKG_MIL
+    config: configs/Diagnosis/MIL/WIKG_MIL.yaml
+    run_dir: null
+  - name: MAMBA2D_MIL
+    config: configs/Diagnosis/MIL/MAMBA2D_MIL.yaml
+    run_dir: null
+  - name: AEM_MIL
+    config: configs/Diagnosis/MIL/AEM_MIL.yaml
+    run_dir: null
+  - name: MICO_MIL
+    config: configs/Diagnosis/MIL/MICO_MIL.yaml
+    run_dir: null
+  - name: MSM_MIL
+    config: configs/Diagnosis/MIL/MSM_MIL.yaml
+    run_dir: null
+  - name: TDA_MIL
+    config: configs/Diagnosis/MIL/TDA_MIL.yaml
+    run_dir: null
+  - name: GDF_MIL
+    config: configs/Diagnosis/MIL/GDF_MIL.yaml
+    run_dir: null
