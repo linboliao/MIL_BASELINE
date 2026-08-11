@@ -12,12 +12,61 @@ inference, cache, OOF merge, and output logic remains isolated in `_engine.py`.
 | `hierarchical_v1` | `hierarchical_spe_v1.yaml` |
 | `best_state_anchor` | `best_state_anchor.yaml` |
 | `best_state_anchor_v1` | `best_state_anchor_v1.yaml` |
+| `clam_sb_robust_anchor` | `clam_sb_robust_anchor.yaml` |
+| `trajectory_robust_anchor` | `trajectory_robust_anchor.yaml` |
 | `constrained_linear_stacking` | `constrained_linear_stacking.yaml` |
 | `ra_spe` | `ra_spe.yaml` |
 | `diversity_veto` | `diversity_veto.yaml` |
 | `sensitivity_constrained` | `sensitivity_constrained.yaml` |
 
-## Best-state + Top1-anchor + automatic fallback
+## Trajectory/best-state + Top1-anchor + automatic fallback
+
+`trajectory_robust_anchor.yaml` is the general, model-name-agnostic variant.
+For every architecture and fold, it averages up to five checkpoints from the
+high-validation-BAcc portion of the training trajectory. It then constructs a
+development OOF BAcc equivalence set (within 0.002 of the best model), applies
+a sensitivity floor, and selects the anchor lexicographically by class/patient-
+equal log loss, checkpoint-state variance, fold BAcc dispersion, and worst-fold
+BAcc. The later complement search uses the same risk controls as the robust
+fixed-anchor variant. No internal- or external-test label participates in
+checkpoint, anchor, member, or weight selection.
+
+With the currently pinned runs, the rule selects CLAM-SB from the development
+OOF pool even though CLAM-MB has a numerically higher BAcc: their BAcc gap is
+inside the prespecified equivalence margin, while CLAM-SB has the better
+class/patient-equal calibration loss. This is the reproducible reason for using
+CLAM-SB as the anchor; its name is an outcome of the rule, not a configuration
+constant.
+
+```bash
+python -u scripts/Diagnosis/spe/run.py --variant trajectory_robust_anchor --preflight
+python -u scripts/Diagnosis/spe/run.py --variant trajectory_robust_anchor \
+  --refit-from result/Diagnosis/SPE/Internal/bacc
+python -u scripts/Diagnosis/spe/run.py --variant trajectory_robust_anchor \
+  --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv \
+  --output-name trajectory_robust_anchor_external \
+  --refit-from result/Diagnosis/SPE/External/bacc_external
+```
+
+`clam_sb_robust_anchor.yaml` is the conservative domain-robust variant. It
+locks CLAM-SB as the anchor, reserves at least 80% of the probability mass for
+it, excludes complements with materially worse development sensitivity, and
+keeps CLAM-SB unchanged outside its uncertain probability interval. BAcc,
+sensitivity, and specificity define a prespecified non-inferiority feasible
+set. Within that set, candidates are ranked lexicographically by Macro-F1,
+AUROC, average precision, patient-equal log loss, and simplicity. Both BAcc and
+sensitivity must remain non-inferior in at least four of five held-out folds.
+Failure of any guardrail automatically deploys CLAM-SB alone.
+
+```bash
+python -u scripts/Diagnosis/spe/run.py --variant clam_sb_robust_anchor --preflight
+python -u scripts/Diagnosis/spe/run.py --variant clam_sb_robust_anchor \
+  --refit-from result/Diagnosis/SPE/Internal/best_state_anchor
+python -u scripts/Diagnosis/spe/run.py --variant clam_sb_robust_anchor \
+  --test-dataset-csv datasets/Diagnosis/External/h-optimus-1/external_test_h-optimus-1.csv \
+  --output-name clam_sb_robust_anchor_external \
+  --refit-from result/Diagnosis/SPE/External/best_state_anchor_external
+```
 
 `best_state_anchor.yaml` is a risk-controlled alternative to the manuscript
 hierarchy. Its story is deliberately deployment-oriented: first align every

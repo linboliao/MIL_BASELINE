@@ -10,6 +10,8 @@ import pandas as pd
 import torch
 
 from ensemble.spe import (
+    apply_anchor_confidence_guard,
+    apply_anchor_decision_guard,
     architecture_disagreement,
     binary_macro_f1,
     class_patient_equal_sample_weights,
@@ -20,6 +22,7 @@ from ensemble.spe import (
     select_architectures,
     select_architectures_for_balanced_accuracy,
     select_architectures_for_macro_f1,
+    select_development_robust_anchor,
     select_diversity_veto,
     select_sensitivity_constrained_subset,
     select_top1_anchor_with_fallback,
@@ -407,6 +410,135 @@ class TestSPE(unittest.TestCase):
         self.assertEqual(selection.deployed_names, ("anchor",))
         np.testing.assert_allclose(selection.deployed_weights, [1.0, 0.0])
         np.testing.assert_allclose(deployed_oof, anchor)
+
+    def test_fixed_clam_anchor_uses_confidence_and_sensitivity_guards(self):
+        labels = np.tile([0, 0, 1, 1], 5)
+        folds = np.repeat(np.arange(1, 6), 4)
+        patients = np.asarray([f"p{index}" for index in range(len(labels))])
+        clam = np.tile([0.1, 0.49, 0.9, 0.49], 5)
+        complement = np.tile([0.1, 0.1, 0.9, 0.9], 5)
+        selection, deployed_oof, _ = select_top1_anchor_with_fallback(
+            np.column_stack([clam, complement]),
+            labels,
+            patients,
+            folds,
+            ["CLAM_SB_MIL", "better_oof_model"],
+            fixed_anchor_name="CLAM_SB_MIL",
+            anchor_min_weight=0.8,
+            anchor_confidence_low=0.2,
+            anchor_confidence_high=0.8,
+            min_members=2,
+            max_members=2,
+            max_individual_bacc_gap=None,
+            max_individual_sensitivity_gap=0.01,
+            bacc_noninferiority_margin=0.003,
+            max_oof_sensitivity_drop=0.0,
+            max_oof_specificity_drop=0.01,
+            min_non_decreasing_folds=4,
+            min_non_decreasing_sensitivity_folds=4,
+        )
+        self.assertEqual(selection.anchor_name, "CLAM_SB_MIL")
+        self.assertTrue(selection.fixed_anchor)
+        self.assertFalse(selection.fallback_triggered)
+        self.assertGreaterEqual(selection.deployed_weights[0], 0.8)
+        self.assertGreaterEqual(selection.sensitivity_gain, 0.0)
+        self.assertEqual(
+            selection.selection_objective,
+            "bacc_noninferiority_then_macro_f1_roc_auc_average_precision_log_loss",
+        )
+        self.assertGreaterEqual(
+            selection.balanced_accuracy_gain,
+            -selection.bacc_noninferiority_margin,
+        )
+        high_confidence = (clam <= 0.2) | (clam >= 0.8)
+        np.testing.assert_allclose(deployed_oof[high_confidence], clam[high_confidence])
+
+        guarded = apply_anchor_confidence_guard(clam, complement, 0.2, 0.8)
+        np.testing.assert_allclose(guarded[high_confidence], clam[high_confidence])
+
+        decision_guarded = apply_anchor_decision_guard(
+            [0.51, 0.51],
+            [0.49, 0.49],
+            np.asarray([[0.40, 0.30], [0.40, 0.60]]),
+            classification_threshold=0.5,
+            confidence_low=0.2,
+            confidence_high=0.8,
+            min_override_agreement=2,
+        )
+        np.testing.assert_allclose(decision_guarded, [0.49, 0.51])
+
+    def test_development_robust_anchor_uses_equivalence_and_trajectory(self):
+        labels = np.tile([0, 0, 1, 1], 5)
+        folds = np.repeat(np.arange(1, 6), 4)
+        patients = np.asarray([f"p{index}" for index in range(len(labels))])
+        top_bacc = np.tile([0.01, 0.49, 0.51, 0.99], 5)
+        calibrated = np.tile([0.10, 0.20, 0.80, 0.90], 5)
+        far_worse = 1.0 - calibrated
+        probabilities = np.column_stack([top_bacc, calibrated, far_worse])
+        state_variances = np.column_stack(
+            [
+                np.full(len(labels), 0.020),
+                np.full(len(labels), 0.001),
+                np.full(len(labels), 0.0001),
+            ]
+        )
+        names = ["A_top_bacc", "B_calibrated", "C_far_worse"]
+
+        selection = select_development_robust_anchor(
+            probabilities,
+            labels,
+            patients,
+            folds,
+            names,
+            state_variances=state_variances,
+            bacc_noninferiority_margin=0.002,
+            max_sensitivity_drop=0.005,
+        )
+        self.assertEqual(selection.best_bacc_name, "A_top_bacc")
+        self.assertEqual(selection.selected_name, "B_calibrated")
+        self.assertEqual(
+            selection.eligible_names, ("A_top_bacc", "B_calibrated")
+        )
+        self.assertTrue(selection.state_variance_used)
+        self.assertLess(
+            selection.class_patient_equal_log_losses[1],
+            selection.class_patient_equal_log_losses[0],
+        )
+        self.assertNotIn("C_far_worse", selection.accuracy_eligible_names)
+
+        guard, deployed_oof, _ = select_top1_anchor_with_fallback(
+            probabilities,
+            labels,
+            patients,
+            folds,
+            names,
+            anchor_selection_strategy="bacc_equivalent_calibrated_stable",
+            state_variances=state_variances,
+            min_members=1,
+            max_members=1,
+            min_oof_bacc_gain=0.0,
+            min_non_decreasing_folds=5,
+        )
+        self.assertEqual(guard.anchor_name, "B_calibrated")
+        self.assertFalse(guard.fixed_anchor)
+        self.assertEqual(
+            guard.anchor_selection_strategy,
+            "bacc_equivalent_calibrated_stable",
+        )
+        self.assertIsNotNone(guard.anchor_selection_diagnostics)
+        np.testing.assert_allclose(deployed_oof, calibrated)
+
+        invalid_variances = state_variances.copy()
+        invalid_variances[0, 0] = -0.1
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            select_development_robust_anchor(
+                probabilities,
+                labels,
+                patients,
+                folds,
+                names,
+                state_variances=invalid_variances,
+            )
 
     def test_paper_stable_interval_and_even_spacing(self):
         values = [0.70, 0.701, 0.702, 0.701, 0.703, 0.720, 0.721, 0.722, 0.721, 0.720, 0.719]

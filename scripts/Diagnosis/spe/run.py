@@ -58,6 +58,14 @@ VARIANTS: dict[str, Variant] = {
         config="configs/Diagnosis/SPE/best_state_anchor_v1.yaml",
         aggregation="top1_anchor_fallback",
     ),
+    "clam_sb_robust_anchor": Variant(
+        config="configs/Diagnosis/SPE/clam_sb_robust_anchor.yaml",
+        aggregation="top1_anchor_fallback",
+    ),
+    "trajectory_robust_anchor": Variant(
+        config="configs/Diagnosis/SPE/trajectory_robust_anchor.yaml",
+        aggregation="top1_anchor_fallback",
+    ),
     "constrained_linear_stacking": Variant(
         config="configs/Diagnosis/SPE/constrained_linear_stacking.yaml",
         aggregation="constrained_linear_stacking",

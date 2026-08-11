@@ -125,23 +125,78 @@ class MacroF1Selection:
 
 
 @dataclass(frozen=True)
+class DevelopmentRobustAnchorSelection:
+    """Development-only anchor selected under accuracy and stability constraints."""
+
+    candidate_names: tuple[str, ...]
+    accuracy_eligible_names: tuple[str, ...]
+    eligible_names: tuple[str, ...]
+    selected_name: str
+    best_bacc_name: str
+    best_balanced_accuracy: float
+    bacc_noninferiority_margin: float
+    max_sensitivity_drop: float | None
+    calibration_tolerance: float
+    state_variance_tolerance: float
+    individual_balanced_accuracies: tuple[float, ...]
+    individual_sensitivities: tuple[float, ...]
+    individual_specificities: tuple[float, ...]
+    class_patient_equal_log_losses: tuple[float, ...]
+    mean_state_variances: tuple[float | None, ...]
+    fold_bacc_standard_deviations: tuple[float, ...]
+    worst_fold_balanced_accuracies: tuple[float, ...]
+    state_variance_used: bool
+    selection_order: tuple[str, ...]
+
+    def as_dict(self) -> dict:
+        values = asdict(self)
+        values["strategy"] = "bacc_equivalent_calibrated_stable"
+        return values
+
+
+@dataclass(frozen=True)
 class Top1AnchorFallbackSelection:
     """Risk-controlled Top1-anchored ensemble selected on development OOF data."""
 
     candidate_names: tuple[str, ...]
     anchor_name: str
+    fixed_anchor: bool
+    anchor_selection_strategy: str
+    anchor_selection_diagnostics: dict | None
     proposed_selected_names: tuple[str, ...]
     deployed_names: tuple[str, ...]
     individual_balanced_accuracies: tuple[float, ...]
+    individual_sensitivities: tuple[float, ...]
     proposed_weights: tuple[float, ...]
     deployed_weights: tuple[float, ...]
     anchor_min_weight: float
+    anchor_confidence_low: float | None
+    anchor_confidence_high: float | None
+    min_override_agreement: int
     anchor_balanced_accuracy: float
     ensemble_balanced_accuracy: float
     balanced_accuracy_gain: float
-    min_oof_bacc_gain: float
+    min_oof_bacc_gain: float | None
+    bacc_noninferiority_margin: float | None
+    anchor_sensitivity: float
+    ensemble_sensitivity: float
+    sensitivity_gain: float
+    max_oof_sensitivity_drop: float | None
+    anchor_specificity: float
+    ensemble_specificity: float
+    specificity_gain: float
+    max_oof_specificity_drop: float | None
+    anchor_macro_f1: float
+    ensemble_macro_f1: float
+    anchor_roc_auc: float
+    ensemble_roc_auc: float
+    anchor_average_precision: float
+    ensemble_average_precision: float
+    selection_objective: str
     non_decreasing_folds: int
     min_non_decreasing_folds: int
+    non_decreasing_sensitivity_folds: int
+    min_non_decreasing_sensitivity_folds: int | None
     fallback_triggered: bool
     fallback_reasons: tuple[str, ...]
     fold_diagnostics: tuple[dict, ...]
@@ -911,6 +966,152 @@ def _balanced_accuracy(
     return (sensitivity + specificity) / 2.0
 
 
+def _sensitivity(labels: np.ndarray, probabilities: np.ndarray, threshold: float) -> float:
+    """Return binary sensitivity, or NaN when no positive examples exist."""
+    positive = labels == 1.0
+    if not positive.any():
+        return float("nan")
+    return float((probabilities[positive] >= threshold).mean())
+
+
+def _specificity(labels: np.ndarray, probabilities: np.ndarray, threshold: float) -> float:
+    """Return binary specificity, or NaN when no negative examples exist."""
+    negative = labels == 0.0
+    if not negative.any():
+        return float("nan")
+    return float((probabilities[negative] < threshold).mean())
+
+
+def _roc_auc(labels: np.ndarray, probabilities: np.ndarray) -> float:
+    """Compute binary AUROC using average ranks for tied probabilities."""
+    labels = np.asarray(labels, dtype=np.float64)
+    probabilities = np.asarray(probabilities, dtype=np.float64)
+    positive_count = int(np.sum(labels == 1.0))
+    negative_count = int(np.sum(labels == 0.0))
+    if positive_count == 0 or negative_count == 0:
+        return float("nan")
+    order = np.argsort(probabilities, kind="mergesort")
+    sorted_probabilities = probabilities[order]
+    ranks = np.empty(len(probabilities), dtype=np.float64)
+    start = 0
+    while start < len(probabilities):
+        end = start + 1
+        while (
+            end < len(probabilities)
+            and sorted_probabilities[end] == sorted_probabilities[start]
+        ):
+            end += 1
+        ranks[order[start:end]] = (start + 1 + end) / 2.0
+        start = end
+    positive_rank_sum = float(np.sum(ranks[labels == 1.0]))
+    return float(
+        (positive_rank_sum - positive_count * (positive_count + 1) / 2.0)
+        / (positive_count * negative_count)
+    )
+
+
+def _average_precision(labels: np.ndarray, probabilities: np.ndarray) -> float:
+    """Compute binary average precision from descending score thresholds."""
+    labels = np.asarray(labels, dtype=np.float64)
+    probabilities = np.asarray(probabilities, dtype=np.float64)
+    positive_count = int(np.sum(labels == 1.0))
+    if positive_count == 0:
+        return float("nan")
+    order = np.argsort(-probabilities, kind="mergesort")
+    sorted_probabilities = probabilities[order]
+    sorted_labels = labels[order]
+    true_positives = 0
+    false_positives = 0
+    previous_recall = 0.0
+    average_precision = 0.0
+    start = 0
+    while start < len(labels):
+        end = start + 1
+        while (
+            end < len(labels)
+            and sorted_probabilities[end] == sorted_probabilities[start]
+        ):
+            end += 1
+        group_positive = int(np.sum(sorted_labels[start:end] == 1.0))
+        true_positives += group_positive
+        false_positives += end - start - group_positive
+        recall = true_positives / positive_count
+        precision = true_positives / (true_positives + false_positives)
+        average_precision += (recall - previous_recall) * precision
+        previous_recall = recall
+        start = end
+    return float(average_precision)
+
+
+def apply_anchor_confidence_guard(
+    anchor_probability: Sequence,
+    ensemble_probability: Sequence,
+    confidence_low: float | None,
+    confidence_high: float | None,
+) -> np.ndarray:
+    """Keep high-confidence anchor predictions and blend only uncertain rows."""
+    anchor = _as_1d(anchor_probability, "anchor_probability")
+    ensemble = _as_1d(ensemble_probability, "ensemble_probability")
+    if len(anchor) != len(ensemble):
+        raise ValueError("Anchor and ensemble probabilities must have equal length.")
+    if confidence_low is None and confidence_high is None:
+        return ensemble.copy()
+    if confidence_low is None or confidence_high is None:
+        raise ValueError("Both confidence_low and confidence_high must be configured.")
+    if not 0.0 <= confidence_low < confidence_high <= 1.0:
+        raise ValueError(
+            "Anchor confidence bounds must satisfy 0 <= low < high <= 1."
+        )
+    protected = (anchor <= confidence_low) | (anchor >= confidence_high)
+    return np.where(protected, anchor, ensemble)
+
+
+def apply_anchor_decision_guard(
+    anchor_probability: Sequence,
+    ensemble_probability: Sequence,
+    complement_probabilities: np.ndarray,
+    classification_threshold: float,
+    confidence_low: float | None,
+    confidence_high: float | None,
+    min_override_agreement: int = 0,
+) -> np.ndarray:
+    """Protect anchor decisions unless enough active complements support a flip."""
+    anchor = _as_1d(anchor_probability, "anchor_probability")
+    guarded = apply_anchor_confidence_guard(
+        anchor,
+        ensemble_probability,
+        confidence_low,
+        confidence_high,
+    )
+    complements = np.asarray(complement_probabilities, dtype=np.float64)
+    if complements.ndim != 2 or complements.shape[0] != len(anchor):
+        raise ValueError(
+            "complement_probabilities must be a row-aligned two-dimensional matrix."
+        )
+    if min_override_agreement < 0:
+        raise ValueError("min_override_agreement must be non-negative.")
+    if min_override_agreement == 0:
+        return guarded
+    if not 0.0 < classification_threshold < 1.0:
+        raise ValueError("classification_threshold must lie strictly between 0 and 1.")
+
+    anchor_prediction = anchor >= classification_threshold
+    guarded_prediction = guarded >= classification_threshold
+    flips = anchor_prediction != guarded_prediction
+    if not flips.any():
+        return guarded
+    if complements.shape[1] < min_override_agreement:
+        guarded[flips] = anchor[flips]
+        return guarded
+    complement_predictions = complements >= classification_threshold
+    agreement = np.sum(
+        complement_predictions == guarded_prediction[:, None], axis=1
+    )
+    blocked = flips & (agreement < min_override_agreement)
+    guarded[blocked] = anchor[blocked]
+    return guarded
+
+
 def binary_macro_f1(
     labels: Sequence,
     probabilities: Sequence,
@@ -1279,12 +1480,237 @@ def select_architectures_for_balanced_accuracy(
     )
 
 
+def select_development_robust_anchor(
+    probabilities: np.ndarray,
+    labels: Sequence,
+    patient_ids: Sequence,
+    fold_ids: Sequence,
+    architecture_names: Sequence[str],
+    state_variances: np.ndarray | None = None,
+    classification_threshold: float = 0.5,
+    bacc_noninferiority_margin: float = 0.002,
+    max_sensitivity_drop: float | None = 0.005,
+    calibration_tolerance: float = 0.001,
+    state_variance_tolerance: float = 1.0e-5,
+) -> DevelopmentRobustAnchorSelection:
+    """Choose a general-purpose anchor from development OOF predictions.
+
+    Balanced Accuracy defines an equivalence set rather than forcing the
+    numerically best architecture to become the anchor.  A sensitivity floor
+    is applied inside that set.  Remaining candidates are ranked by
+    class/patient-equal calibration, checkpoint-state variance, and fold
+    stability.  Calibration and state variance are discretized at configured
+    resolutions before the later criteria are considered, which avoids
+    treating numerical noise as a meaningful difference.
+
+    ``state_variances`` must contain the per-sample variance across validation-
+    selected checkpoint states.  Independent-test labels or metrics are never
+    accepted by this function.
+    """
+    probabilities = _validate_probabilities(probabilities)
+    labels_array = _as_1d(labels, "labels")
+    patients = np.asarray(patient_ids, dtype=str)
+    folds = np.asarray(fold_ids)
+    names = tuple(str(name) for name in architecture_names)
+    sample_count, architecture_count = probabilities.shape
+
+    if any(len(values) != sample_count for values in (labels_array, patients, folds)):
+        raise ValueError("Labels/patient IDs/fold IDs do not match probability rows.")
+    if len(names) != architecture_count or len(set(names)) != architecture_count:
+        raise ValueError("architecture_names must uniquely match probability columns.")
+    if not np.isin(labels_array, [0.0, 1.0]).all() or np.unique(labels_array).size != 2:
+        raise ValueError("Robust anchor selection requires both binary labels 0/1.")
+    if not 0.0 < classification_threshold < 1.0:
+        raise ValueError("classification_threshold must lie strictly between 0 and 1.")
+    if bacc_noninferiority_margin < 0:
+        raise ValueError("bacc_noninferiority_margin must be non-negative.")
+    if max_sensitivity_drop is not None and max_sensitivity_drop < 0:
+        raise ValueError("max_sensitivity_drop must be non-negative or null.")
+    if calibration_tolerance <= 0 or state_variance_tolerance <= 0:
+        raise ValueError("Anchor metric tolerances must be positive.")
+
+    unique_folds = np.unique(folds)
+    if len(unique_folds) < 2:
+        raise ValueError("Robust anchor selection requires at least two OOF folds.")
+    patient_fold_counts = np.asarray(
+        [len(np.unique(folds[patients == patient])) for patient in np.unique(patients)]
+    )
+    if (patient_fold_counts > 1).any():
+        raise ValueError("A patient cannot occur in more than one OOF fold.")
+
+    state_array = None
+    if state_variances is not None:
+        state_array = np.asarray(state_variances, dtype=np.float64)
+        if state_array.shape != probabilities.shape:
+            raise ValueError(
+                "state_variances must have the same [samples, architectures] "
+                f"shape as probabilities, got {state_array.shape}."
+            )
+        if not np.isfinite(state_array).all() or (state_array < 0.0).any():
+            raise ValueError("state_variances must be finite and non-negative.")
+
+    individual_bacc = np.asarray(
+        [
+            _balanced_accuracy(
+                labels_array, probabilities[:, index], classification_threshold
+            )
+            for index in range(architecture_count)
+        ],
+        dtype=np.float64,
+    )
+    individual_sensitivity = np.asarray(
+        [
+            _sensitivity(labels_array, probabilities[:, index], classification_threshold)
+            for index in range(architecture_count)
+        ],
+        dtype=np.float64,
+    )
+    individual_specificity = np.asarray(
+        [
+            _specificity(labels_array, probabilities[:, index], classification_threshold)
+            for index in range(architecture_count)
+        ],
+        dtype=np.float64,
+    )
+    metric_weights = class_patient_equal_sample_weights(labels_array, patients)
+    log_losses = np.asarray(
+        [
+            _weighted_log_loss(
+                probabilities[:, index], labels_array, metric_weights
+            )
+            for index in range(architecture_count)
+        ],
+        dtype=np.float64,
+    )
+    if state_array is None:
+        mean_state_variances = np.full(architecture_count, np.nan, dtype=np.float64)
+    else:
+        mean_state_variances = np.sum(
+            metric_weights[:, None] * state_array, axis=0
+        )
+
+    fold_scores = np.full(
+        (len(unique_folds), architecture_count), np.nan, dtype=np.float64
+    )
+    for fold_index, fold in enumerate(unique_folds):
+        mask = folds == fold
+        for architecture_index in range(architecture_count):
+            fold_scores[fold_index, architecture_index] = _balanced_accuracy(
+                labels_array[mask],
+                probabilities[mask, architecture_index],
+                classification_threshold,
+            )
+    if not np.isfinite(fold_scores).all():
+        raise ValueError(
+            "Every OOF fold must contain both classes for robust anchor selection."
+        )
+    fold_bacc_std = np.std(fold_scores, axis=0)
+    worst_fold_bacc = np.min(fold_scores, axis=0)
+
+    best_index = min(
+        range(architecture_count),
+        key=lambda index: (-individual_bacc[index], names[index]),
+    )
+    best_bacc = float(individual_bacc[best_index])
+    accuracy_eligible = tuple(
+        index
+        for index in range(architecture_count)
+        if individual_bacc[index] + bacc_noninferiority_margin
+        >= best_bacc - 1.0e-12
+    )
+    if max_sensitivity_drop is None:
+        eligible = accuracy_eligible
+    else:
+        sensitivity_floor = (
+            float(individual_sensitivity[best_index]) - max_sensitivity_drop
+        )
+        eligible = tuple(
+            index
+            for index in accuracy_eligible
+            if individual_sensitivity[index] >= sensitivity_floor - 1.0e-12
+        )
+
+    def resolution_bucket(value: float, resolution: float) -> int:
+        return int(np.floor(value / resolution + 1.0e-12))
+
+    def selection_key(index: int) -> tuple:
+        variance_bucket = (
+            resolution_bucket(mean_state_variances[index], state_variance_tolerance)
+            if state_array is not None
+            else 0
+        )
+        return (
+            resolution_bucket(log_losses[index], calibration_tolerance),
+            variance_bucket,
+            float(fold_bacc_std[index]),
+            -float(worst_fold_bacc[index]),
+            float(log_losses[index]),
+            (
+                float(mean_state_variances[index])
+                if state_array is not None
+                else 0.0
+            ),
+            -float(individual_bacc[index]),
+            names[index],
+        )
+
+    selected_index = min(eligible, key=selection_key)
+    return DevelopmentRobustAnchorSelection(
+        candidate_names=names,
+        accuracy_eligible_names=tuple(names[index] for index in accuracy_eligible),
+        eligible_names=tuple(names[index] for index in eligible),
+        selected_name=names[selected_index],
+        best_bacc_name=names[best_index],
+        best_balanced_accuracy=best_bacc,
+        bacc_noninferiority_margin=float(bacc_noninferiority_margin),
+        max_sensitivity_drop=(
+            None if max_sensitivity_drop is None else float(max_sensitivity_drop)
+        ),
+        calibration_tolerance=float(calibration_tolerance),
+        state_variance_tolerance=float(state_variance_tolerance),
+        individual_balanced_accuracies=tuple(float(value) for value in individual_bacc),
+        individual_sensitivities=tuple(
+            float(value) for value in individual_sensitivity
+        ),
+        individual_specificities=tuple(
+            float(value) for value in individual_specificity
+        ),
+        class_patient_equal_log_losses=tuple(float(value) for value in log_losses),
+        mean_state_variances=tuple(
+            None if not np.isfinite(value) else float(value)
+            for value in mean_state_variances
+        ),
+        fold_bacc_standard_deviations=tuple(
+            float(value) for value in fold_bacc_std
+        ),
+        worst_fold_balanced_accuracies=tuple(
+            float(value) for value in worst_fold_bacc
+        ),
+        state_variance_used=state_array is not None,
+        selection_order=(
+            "bacc_noninferiority_set",
+            "sensitivity_floor",
+            "class_patient_equal_log_loss",
+            "checkpoint_state_variance",
+            "fold_bacc_standard_deviation",
+            "worst_fold_bacc",
+        ),
+    )
+
+
 def select_top1_anchor_with_fallback(
     probabilities: np.ndarray,
     labels: Sequence,
     patient_ids: Sequence,
     fold_ids: Sequence,
     architecture_names: Sequence[str],
+    fixed_anchor_name: str | None = None,
+    anchor_selection_strategy: str = "max_bacc",
+    state_variances: np.ndarray | None = None,
+    anchor_bacc_noninferiority_margin: float = 0.002,
+    anchor_max_sensitivity_drop: float | None = 0.005,
+    anchor_calibration_tolerance: float = 0.001,
+    anchor_state_variance_tolerance: float = 1.0e-5,
     diversity_lambda: float = 0.05,
     classification_threshold: float = 0.5,
     anchor_min_weight: float = 0.70,
@@ -1293,13 +1719,26 @@ def select_top1_anchor_with_fallback(
     max_members: int = 3,
     min_cv_member_improvement: float = 0.0,
     max_individual_bacc_gap: float | None = 0.05,
+    max_individual_sensitivity_gap: float | None = None,
     min_oof_bacc_gain: float = 0.005,
+    bacc_noninferiority_margin: float | None = None,
+    max_oof_sensitivity_drop: float | None = None,
+    max_oof_specificity_drop: float | None = None,
     min_non_decreasing_folds: int = 4,
+    min_non_decreasing_sensitivity_folds: int | None = None,
     fold_tolerance: float = 0.0,
+    fold_sensitivity_tolerance: float = 0.0,
+    anchor_confidence_low: float | None = None,
+    anchor_confidence_high: float | None = None,
+    min_override_agreement: int = 0,
+    secondary_metric_tolerance: float = 0.001,
 ) -> tuple[Top1AnchorFallbackSelection, np.ndarray, np.ndarray]:
     """Select a small Top1-anchored ensemble and fall back when it is unstable.
 
-    The best individual development OOF architecture is the immutable anchor.
+    The best individual development OOF architecture is the default immutable
+    anchor. ``bacc_equivalent_calibrated_stable`` instead chooses a near-best,
+    well-calibrated and trajectory-stable development anchor.
+    ``fixed_anchor_name`` may lock a prespecified architecture.
     Every fold-held-out candidate blend reserves at least ``anchor_min_weight``
     for that anchor.  Complementary members share only the remaining risk
     budget.  The proposed blend is deployed only when its pooled OOF BAcc gain
@@ -1319,6 +1758,17 @@ def select_top1_anchor_with_fallback(
         raise ValueError("Labels/patient IDs/fold IDs do not match probability rows.")
     if len(names) != architecture_count or len(set(names)) != architecture_count:
         raise ValueError("architecture_names must uniquely match probability columns.")
+    allowed_anchor_strategies = {"max_bacc", "bacc_equivalent_calibrated_stable"}
+    if anchor_selection_strategy not in allowed_anchor_strategies:
+        raise ValueError(
+            "anchor_selection_strategy must be one of "
+            f"{sorted(allowed_anchor_strategies)}."
+        )
+    if fixed_anchor_name is not None and anchor_selection_strategy != "max_bacc":
+        raise ValueError(
+            "fixed_anchor_name cannot be combined with an automatic anchor "
+            "selection strategy."
+        )
     if not np.isin(labels_array, [0.0, 1.0]).all():
         raise ValueError("Top1-anchor selection requires binary labels 0/1.")
     if not 0.0 < classification_threshold < 1.0:
@@ -1341,12 +1791,42 @@ def select_top1_anchor_with_fallback(
         raise ValueError("BAcc improvement requirements must be non-negative.")
     if max_individual_bacc_gap is not None and max_individual_bacc_gap < 0:
         raise ValueError("max_individual_bacc_gap must be non-negative or null.")
+    if max_individual_sensitivity_gap is not None and max_individual_sensitivity_gap < 0:
+        raise ValueError(
+            "max_individual_sensitivity_gap must be non-negative or null."
+        )
+    if max_oof_sensitivity_drop is not None and max_oof_sensitivity_drop < 0:
+        raise ValueError("max_oof_sensitivity_drop must be non-negative or null.")
+    if bacc_noninferiority_margin is not None and bacc_noninferiority_margin < 0:
+        raise ValueError("bacc_noninferiority_margin must be non-negative or null.")
+    if max_oof_specificity_drop is not None and max_oof_specificity_drop < 0:
+        raise ValueError("max_oof_specificity_drop must be non-negative or null.")
+    if secondary_metric_tolerance <= 0:
+        raise ValueError("secondary_metric_tolerance must be positive.")
+    if fold_sensitivity_tolerance < 0:
+        raise ValueError("fold_sensitivity_tolerance must be non-negative.")
+    if min_override_agreement < 0:
+        raise ValueError("min_override_agreement must be non-negative.")
+    # Validate the optional confidence guard once, including paired bounds.
+    apply_anchor_confidence_guard(
+        np.asarray([0.5]),
+        np.asarray([0.5]),
+        anchor_confidence_low,
+        anchor_confidence_high,
+    )
     unique_folds = np.unique(folds)
     if len(unique_folds) < 2:
         raise ValueError("Top1-anchor selection requires at least two OOF folds.")
     if not 1 <= min_non_decreasing_folds <= len(unique_folds):
         raise ValueError(
             "min_non_decreasing_folds must be between 1 and the OOF fold count."
+        )
+    if min_non_decreasing_sensitivity_folds is not None and not (
+        1 <= min_non_decreasing_sensitivity_folds <= len(unique_folds)
+    ):
+        raise ValueError(
+            "min_non_decreasing_sensitivity_folds must be between 1 and the "
+            "OOF fold count, or null."
         )
     patient_fold_counts = np.asarray(
         [len(np.unique(folds[patients == patient])) for patient in np.unique(patients)]
@@ -1362,12 +1842,117 @@ def select_top1_anchor_with_fallback(
             for index in range(architecture_count)
         ]
     )
-    anchor = min(
-        range(architecture_count),
-        key=lambda index: (-individual_scores[index], names[index]),
+    individual_sensitivities = np.asarray(
+        [
+            _sensitivity(labels_array, probabilities[:, index], classification_threshold)
+            for index in range(architecture_count)
+        ]
     )
+    robust_anchor_selection = None
+    if fixed_anchor_name is not None:
+        if fixed_anchor_name not in names:
+            raise ValueError(
+                f"fixed_anchor_name={fixed_anchor_name!r} is not a candidate architecture."
+            )
+        anchor = names.index(fixed_anchor_name)
+        effective_anchor_strategy = "fixed"
+    elif anchor_selection_strategy == "bacc_equivalent_calibrated_stable":
+        robust_anchor_selection = select_development_robust_anchor(
+            probabilities,
+            labels=labels_array,
+            patient_ids=patients,
+            fold_ids=folds,
+            architecture_names=names,
+            state_variances=state_variances,
+            classification_threshold=classification_threshold,
+            bacc_noninferiority_margin=anchor_bacc_noninferiority_margin,
+            max_sensitivity_drop=anchor_max_sensitivity_drop,
+            calibration_tolerance=anchor_calibration_tolerance,
+            state_variance_tolerance=anchor_state_variance_tolerance,
+        )
+        anchor = names.index(robust_anchor_selection.selected_name)
+        effective_anchor_strategy = anchor_selection_strategy
+    else:
+        anchor = min(
+            range(architecture_count),
+            key=lambda index: (-individual_scores[index], names[index]),
+        )
+        effective_anchor_strategy = "max_bacc"
     anchor_probability = probabilities[:, anchor].copy()
     anchor_score = float(individual_scores[anchor])
+    anchor_sensitivity = float(individual_sensitivities[anchor])
+    anchor_specificity = _specificity(
+        labels_array, anchor_probability, classification_threshold
+    )
+
+    def probability_metrics(
+        metric_labels: np.ndarray,
+        metric_probabilities: np.ndarray,
+        metric_patients: np.ndarray,
+    ) -> dict[str, float]:
+        patient_weights = class_patient_equal_sample_weights(
+            metric_labels, metric_patients
+        )
+        return {
+            "balanced_accuracy": _balanced_accuracy(
+                metric_labels, metric_probabilities, classification_threshold
+            ),
+            "sensitivity": _sensitivity(
+                metric_labels, metric_probabilities, classification_threshold
+            ),
+            "specificity": _specificity(
+                metric_labels, metric_probabilities, classification_threshold
+            ),
+            "macro_f1": binary_macro_f1(
+                metric_labels, metric_probabilities, classification_threshold
+            ),
+            "roc_auc": _roc_auc(metric_labels, metric_probabilities),
+            "average_precision": _average_precision(
+                metric_labels, metric_probabilities
+            ),
+            "patient_equal_log_loss": _weighted_log_loss(
+                metric_probabilities, metric_labels, patient_weights
+            ),
+        }
+
+    anchor_metrics = probability_metrics(
+        labels_array, anchor_probability, patients
+    )
+
+    def is_noninferior(
+        metrics: dict[str, float], reference: dict[str, float] | None = None
+    ) -> bool:
+        reference = anchor_metrics if reference is None else reference
+        if bacc_noninferiority_margin is not None and (
+            metrics["balanced_accuracy"] + bacc_noninferiority_margin
+            < reference["balanced_accuracy"] - 1e-12
+        ):
+            return False
+        if max_oof_sensitivity_drop is not None and (
+            metrics["sensitivity"] + max_oof_sensitivity_drop
+            < reference["sensitivity"] - 1e-12
+        ):
+            return False
+        if max_oof_specificity_drop is not None and (
+            metrics["specificity"] + max_oof_specificity_drop
+            < reference["specificity"] - 1e-12
+        ):
+            return False
+        return True
+
+    def secondary_key(metrics: dict[str, float], anchor_weight: float) -> tuple:
+        tolerance = secondary_metric_tolerance
+
+        def bucket(value: float) -> int:
+            return int(np.floor(value / tolerance + 1e-12))
+
+        return (
+            -bucket(metrics["macro_f1"]),
+            -bucket(metrics["roc_auc"]),
+            -bucket(metrics["average_precision"]),
+            metrics["patient_equal_log_loss"],
+            -anchor_weight,
+        )
 
     eligible = [index for index in range(architecture_count) if index != anchor]
     if max_individual_bacc_gap is not None:
@@ -1375,6 +1960,13 @@ def select_top1_anchor_with_fallback(
             index
             for index in eligible
             if individual_scores[index] >= anchor_score - max_individual_bacc_gap
+        ]
+    if max_individual_sensitivity_gap is not None:
+        eligible = [
+            index
+            for index in eligible
+            if individual_sensitivities[index]
+            >= anchor_sensitivity - max_individual_sensitivity_gap
         ]
 
     def anchored_weights(
@@ -1397,6 +1989,9 @@ def select_top1_anchor_with_fallback(
         sample_weights = class_patient_equal_sample_weights(
             train_labels, train_patients
         )
+        train_anchor_metrics = probability_metrics(
+            train_labels, train_probabilities[:, anchor], train_patients
+        )
         subset_similarity = residual_similarity_matrix(
             train_probabilities[:, indices], train_labels, sample_weights
         )
@@ -1412,6 +2007,20 @@ def select_top1_anchor_with_fallback(
                 candidate[index] = units * actual_step
             candidate[anchor] = 1.0 - float(candidate.sum())
             candidate_probability = train_probabilities @ candidate
+            active_complements = [
+                index
+                for index in complement_indices
+                if candidate[index] > 1e-12
+            ]
+            candidate_probability = apply_anchor_decision_guard(
+                train_probabilities[:, anchor],
+                candidate_probability,
+                train_probabilities[:, active_complements],
+                classification_threshold,
+                anchor_confidence_low,
+                anchor_confidence_high,
+                min_override_agreement,
+            )
             bacc = _balanced_accuracy(
                 train_labels, candidate_probability, classification_threshold
             )
@@ -1421,9 +2030,28 @@ def select_top1_anchor_with_fallback(
             ) + diversity_lambda * float(
                 subset_weights @ subset_similarity @ subset_weights
             )
-            # Prefer higher BAcc, then lower smooth objective, then a larger
-            # anchor share when two solutions are otherwise equivalent.
-            key = (-float(bacc), float(tie_objective), -candidate[anchor], allocation)
+            if bacc_noninferiority_margin is not None:
+                metrics = probability_metrics(
+                    train_labels, candidate_probability, train_patients
+                )
+                if not is_noninferior(metrics, train_anchor_metrics):
+                    continue
+                # BAcc, sensitivity and specificity define feasibility. Among
+                # feasible candidates, optimize secondary endpoints in the
+                # prespecified order and prefer a simpler anchor-heavy blend.
+                key = (
+                    *secondary_key(metrics, float(candidate[anchor])),
+                    float(tie_objective),
+                    allocation,
+                )
+            else:
+                # Legacy mode: prefer higher BAcc, then the smooth objective.
+                key = (
+                    -float(bacc),
+                    float(tie_objective),
+                    -candidate[anchor],
+                    allocation,
+                )
             if best_key is None or key < best_key:
                 best_key = key
                 best_weights = candidate
@@ -1431,9 +2059,11 @@ def select_top1_anchor_with_fallback(
             raise AssertionError("Top1-anchor weight grid produced no candidates.")
         return best_weights
 
-    score_cache: dict[tuple[int, ...], tuple[float, np.ndarray]] = {}
+    score_cache: dict[tuple[int, ...], tuple[dict[str, float], np.ndarray]] = {}
 
-    def cross_fitted_score(indices: Sequence[int]) -> tuple[float, np.ndarray]:
+    def cross_fitted_score(
+        indices: Sequence[int],
+    ) -> tuple[dict[str, float], np.ndarray]:
         ordered = (anchor, *sorted(index for index in indices if index != anchor))
         if ordered in score_cache:
             return score_cache[ordered]
@@ -1442,11 +2072,25 @@ def select_top1_anchor_with_fallback(
             held_out_mask = folds == held_out_fold
             training_mask = ~held_out_mask
             weights = anchored_weights(ordered, training_mask)
-            cross_fitted[held_out_mask] = probabilities[held_out_mask] @ weights
-        score = _balanced_accuracy(
-            labels_array, cross_fitted, classification_threshold
+            held_out_probability = probabilities[held_out_mask] @ weights
+            active_complements = [
+                index
+                for index in ordered
+                if index != anchor and weights[index] > 1e-12
+            ]
+            cross_fitted[held_out_mask] = apply_anchor_decision_guard(
+                anchor_probability[held_out_mask],
+                held_out_probability,
+                probabilities[held_out_mask][:, active_complements],
+                classification_threshold,
+                anchor_confidence_low,
+                anchor_confidence_high,
+                min_override_agreement,
+            )
+        metrics = probability_metrics(
+            labels_array, cross_fitted, patients
         )
-        score_cache[ordered] = (float(score), cross_fitted)
+        score_cache[ordered] = (metrics, cross_fitted)
         return score_cache[ordered]
 
     selected = [anchor]
@@ -1460,36 +2104,133 @@ def select_top1_anchor_with_fallback(
             "role": "anchor",
         }
     ]
-    while len(selected) < max_members:
-        remaining = [index for index in eligible if index not in selected]
-        if not remaining:
-            break
-        scored = []
-        for index in remaining:
-            score, _ = cross_fitted_score([*selected, index])
-            scored.append((score, names[index], index))
-        candidate_score, _, candidate = min(
-            scored, key=lambda item: (-item[0], item[1])
+    if bacc_noninferiority_margin is not None:
+        feasible_subsets: list[tuple[tuple, tuple[int, ...], dict[str, float], np.ndarray]] = []
+        for member_count in range(min_members, max_members + 1):
+            for complement_subset in combinations(eligible, member_count - 1):
+                indices = (anchor, *complement_subset)
+                metrics, cross_fitted = cross_fitted_score(indices)
+                if not is_noninferior(metrics):
+                    continue
+                subset_bacc_folds = 0
+                subset_sensitivity_folds = 0
+                for fold in unique_folds:
+                    fold_mask = folds == fold
+                    fold_anchor_bacc = _balanced_accuracy(
+                        labels_array[fold_mask],
+                        anchor_probability[fold_mask],
+                        classification_threshold,
+                    )
+                    fold_candidate_bacc = _balanced_accuracy(
+                        labels_array[fold_mask],
+                        cross_fitted[fold_mask],
+                        classification_threshold,
+                    )
+                    subset_bacc_folds += int(
+                        np.isfinite(fold_anchor_bacc)
+                        and np.isfinite(fold_candidate_bacc)
+                        and fold_candidate_bacc + fold_tolerance
+                        >= fold_anchor_bacc
+                    )
+                    fold_anchor_sensitivity = _sensitivity(
+                        labels_array[fold_mask],
+                        anchor_probability[fold_mask],
+                        classification_threshold,
+                    )
+                    fold_candidate_sensitivity = _sensitivity(
+                        labels_array[fold_mask],
+                        cross_fitted[fold_mask],
+                        classification_threshold,
+                    )
+                    subset_sensitivity_folds += int(
+                        np.isfinite(fold_anchor_sensitivity)
+                        and np.isfinite(fold_candidate_sensitivity)
+                        and fold_candidate_sensitivity
+                        + fold_sensitivity_tolerance
+                        >= fold_anchor_sensitivity
+                    )
+                if subset_bacc_folds < min_non_decreasing_folds:
+                    continue
+                if (
+                    min_non_decreasing_sensitivity_folds is not None
+                    and subset_sensitivity_folds
+                    < min_non_decreasing_sensitivity_folds
+                ):
+                    continue
+                key = (
+                    *secondary_key(metrics, anchor_min_weight),
+                    member_count,
+                    tuple(names[index] for index in indices),
+                )
+                feasible_subsets.append((key, indices, metrics, cross_fitted))
+        if feasible_subsets:
+            _, selected_tuple, selected_metrics, proposed_oof_probability = min(
+                feasible_subsets, key=lambda item: item[0]
+            )
+            selected = list(selected_tuple)
+            current_score = float(selected_metrics["balanced_accuracy"])
+            steps.extend(
+                {
+                    "step": step,
+                    "added": names[index],
+                    "cross_validated_balanced_accuracy": current_score,
+                    "cross_validated_macro_f1": float(
+                        selected_metrics["macro_f1"]
+                    ),
+                    "cross_validated_roc_auc": float(
+                        selected_metrics["roc_auc"]
+                    ),
+                    "role": "complement",
+                }
+                for step, index in enumerate(selected_tuple[1:], start=2)
+            )
+        else:
+            selected_tuple = (anchor,)
+            selected_metrics = anchor_metrics
+            proposed_oof_probability = anchor_probability.copy()
+    else:
+        while len(selected) < max_members:
+            remaining = [index for index in eligible if index not in selected]
+            if not remaining:
+                break
+            scored = []
+            for index in remaining:
+                metrics, _ = cross_fitted_score([*selected, index])
+                scored.append(
+                    (metrics["balanced_accuracy"], names[index], index)
+                )
+            candidate_score, _, candidate = min(
+                scored, key=lambda item: (-item[0], item[1])
+            )
+            improvement = candidate_score - current_score
+            if (
+                len(selected) >= min_members
+                and improvement < min_cv_member_improvement
+            ):
+                break
+            selected.append(candidate)
+            current_score = candidate_score
+            steps.append(
+                {
+                    "step": len(selected),
+                    "added": names[candidate],
+                    "cross_validated_balanced_accuracy": float(current_score),
+                    "improvement": float(improvement),
+                    "role": "complement",
+                }
+            )
+        selected_tuple = (
+            anchor,
+            *sorted(index for index in selected if index != anchor),
         )
-        improvement = candidate_score - current_score
-        if len(selected) >= min_members and improvement < min_cv_member_improvement:
-            break
-        selected.append(candidate)
-        current_score = candidate_score
-        steps.append(
-            {
-                "step": len(selected),
-                "added": names[candidate],
-                "cross_validated_balanced_accuracy": float(current_score),
-                "improvement": float(improvement),
-                "role": "complement",
-            }
+        selected_metrics, proposed_oof_probability = cross_fitted_score(
+            selected_tuple
         )
 
-    selected_tuple = (anchor, *sorted(index for index in selected if index != anchor))
-    ensemble_score, proposed_oof_probability = cross_fitted_score(selected_tuple)
+    ensemble_score = float(selected_metrics["balanced_accuracy"])
     fold_diagnostics: list[dict] = []
     non_decreasing_folds = 0
+    non_decreasing_sensitivity_folds = 0
     for fold in unique_folds:
         mask = folds == fold
         fold_anchor = _balanced_accuracy(
@@ -1504,6 +2245,19 @@ def select_top1_anchor_with_fallback(
             and fold_ensemble + fold_tolerance >= fold_anchor
         )
         non_decreasing_folds += int(non_decreasing)
+        fold_anchor_sensitivity = _sensitivity(
+            labels_array[mask], anchor_probability[mask], classification_threshold
+        )
+        fold_ensemble_sensitivity = _sensitivity(
+            labels_array[mask], proposed_oof_probability[mask], classification_threshold
+        )
+        sensitivity_non_decreasing = bool(
+            np.isfinite(fold_anchor_sensitivity)
+            and np.isfinite(fold_ensemble_sensitivity)
+            and fold_ensemble_sensitivity + fold_sensitivity_tolerance
+            >= fold_anchor_sensitivity
+        )
+        non_decreasing_sensitivity_folds += int(sensitivity_non_decreasing)
         fold_diagnostics.append(
             {
                 "fold": int(fold) if np.issubdtype(type(fold), np.integer) else str(fold),
@@ -1511,12 +2265,34 @@ def select_top1_anchor_with_fallback(
                 "ensemble_balanced_accuracy": float(fold_ensemble),
                 "gain": float(fold_ensemble - fold_anchor),
                 "non_decreasing": non_decreasing,
+                "anchor_sensitivity": float(fold_anchor_sensitivity),
+                "ensemble_sensitivity": float(fold_ensemble_sensitivity),
+                "sensitivity_gain": float(
+                    fold_ensemble_sensitivity - fold_anchor_sensitivity
+                ),
+                "sensitivity_non_decreasing": sensitivity_non_decreasing,
             }
         )
 
     gain = float(ensemble_score - anchor_score)
+    ensemble_sensitivity = _sensitivity(
+        labels_array, proposed_oof_probability, classification_threshold
+    )
+    sensitivity_gain = float(ensemble_sensitivity - anchor_sensitivity)
+    ensemble_specificity = _specificity(
+        labels_array, proposed_oof_probability, classification_threshold
+    )
+    specificity_gain = float(ensemble_specificity - anchor_specificity)
     fallback_reasons = []
-    if gain + 1e-12 < min_oof_bacc_gain:
+    if (
+        bacc_noninferiority_margin is not None
+        and gain + bacc_noninferiority_margin < -1e-12
+    ):
+        fallback_reasons.append(
+            f"OOF BAcc gain {gain:.6f} violates non-inferiority margin "
+            f"{-bacc_noninferiority_margin:.6f}"
+        )
+    elif bacc_noninferiority_margin is None and gain + 1e-12 < min_oof_bacc_gain:
         fallback_reasons.append(
             f"OOF BAcc gain {gain:.6f} < required {min_oof_bacc_gain:.6f}"
         )
@@ -1524,6 +2300,32 @@ def select_top1_anchor_with_fallback(
         fallback_reasons.append(
             f"non-decreasing folds {non_decreasing_folds} < required "
             f"{min_non_decreasing_folds}"
+        )
+    if (
+        max_oof_sensitivity_drop is not None
+        and sensitivity_gain + max_oof_sensitivity_drop < -1e-12
+    ):
+        fallback_reasons.append(
+            f"OOF sensitivity drop {-sensitivity_gain:.6f} > allowed "
+            f"{max_oof_sensitivity_drop:.6f}"
+        )
+    if (
+        max_oof_specificity_drop is not None
+        and specificity_gain + max_oof_specificity_drop < -1e-12
+    ):
+        fallback_reasons.append(
+            f"OOF specificity drop {-specificity_gain:.6f} > allowed "
+            f"{max_oof_specificity_drop:.6f}"
+        )
+    if (
+        min_non_decreasing_sensitivity_folds is not None
+        and non_decreasing_sensitivity_folds
+        < min_non_decreasing_sensitivity_folds
+    ):
+        fallback_reasons.append(
+            "non-decreasing sensitivity folds "
+            f"{non_decreasing_sensitivity_folds} < required "
+            f"{min_non_decreasing_sensitivity_folds}"
         )
     if len(selected_tuple) < min_members:
         fallback_reasons.append(
@@ -1546,18 +2348,57 @@ def select_top1_anchor_with_fallback(
     result = Top1AnchorFallbackSelection(
         candidate_names=names,
         anchor_name=names[anchor],
+        fixed_anchor=fixed_anchor_name is not None,
+        anchor_selection_strategy=effective_anchor_strategy,
+        anchor_selection_diagnostics=(
+            None
+            if robust_anchor_selection is None
+            else robust_anchor_selection.as_dict()
+        ),
         proposed_selected_names=tuple(names[index] for index in selected_tuple),
         deployed_names=deployed_names,
         individual_balanced_accuracies=tuple(float(value) for value in individual_scores),
+        individual_sensitivities=tuple(
+            float(value) for value in individual_sensitivities
+        ),
         proposed_weights=tuple(float(value) for value in proposed_weights),
         deployed_weights=tuple(float(value) for value in deployed_weights),
         anchor_min_weight=float(anchor_min_weight),
+        anchor_confidence_low=anchor_confidence_low,
+        anchor_confidence_high=anchor_confidence_high,
+        min_override_agreement=int(min_override_agreement),
         anchor_balanced_accuracy=anchor_score,
         ensemble_balanced_accuracy=float(ensemble_score),
         balanced_accuracy_gain=gain,
-        min_oof_bacc_gain=float(min_oof_bacc_gain),
+        min_oof_bacc_gain=(
+            None
+            if bacc_noninferiority_margin is not None
+            else float(min_oof_bacc_gain)
+        ),
+        bacc_noninferiority_margin=bacc_noninferiority_margin,
+        anchor_sensitivity=anchor_sensitivity,
+        ensemble_sensitivity=float(ensemble_sensitivity),
+        sensitivity_gain=sensitivity_gain,
+        max_oof_sensitivity_drop=max_oof_sensitivity_drop,
+        anchor_specificity=float(anchor_specificity),
+        ensemble_specificity=float(ensemble_specificity),
+        specificity_gain=specificity_gain,
+        max_oof_specificity_drop=max_oof_specificity_drop,
+        anchor_macro_f1=float(anchor_metrics["macro_f1"]),
+        ensemble_macro_f1=float(selected_metrics["macro_f1"]),
+        anchor_roc_auc=float(anchor_metrics["roc_auc"]),
+        ensemble_roc_auc=float(selected_metrics["roc_auc"]),
+        anchor_average_precision=float(anchor_metrics["average_precision"]),
+        ensemble_average_precision=float(selected_metrics["average_precision"]),
+        selection_objective=(
+            "bacc_noninferiority_then_macro_f1_roc_auc_average_precision_log_loss"
+            if bacc_noninferiority_margin is not None
+            else "balanced_accuracy"
+        ),
         non_decreasing_folds=int(non_decreasing_folds),
         min_non_decreasing_folds=int(min_non_decreasing_folds),
+        non_decreasing_sensitivity_folds=int(non_decreasing_sensitivity_folds),
+        min_non_decreasing_sensitivity_folds=min_non_decreasing_sensitivity_folds,
         fallback_triggered=fallback_triggered,
         fallback_reasons=tuple(fallback_reasons),
         fold_diagnostics=tuple(fold_diagnostics),

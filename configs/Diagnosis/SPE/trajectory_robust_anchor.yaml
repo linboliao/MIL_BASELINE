@@ -1,0 +1,108 @@
+experiment:
+  name: trajectory_robust_anchor
+  device: cuda:0
+  num_workers: 0
+  preload: false
+  classification_threshold: 0.5
+  development_dataset_root: datasets/Diagnosis/Stains/Reinhard
+  independent_test_dataset_root: datasets/Diagnosis/MIL
+  output_root: result/Diagnosis/SPE
+
+# Use validation trajectories only. For each architecture/fold, average up to
+# five checkpoints lying within 0.005 BAcc of that fold's best validation epoch.
+checkpoint_selection:
+  strategy: high_performance_band
+  metric: bacc
+  metric_tolerance: 0.005
+  max_checkpoints: 5
+
+weighting:
+  diversity_lambda: 0.02
+  class_balance: true
+
+aggregation:
+  strategy: top1_anchor_fallback
+
+  # General development-only anchor rule. BAcc first defines an equivalence
+  # set; calibration and trajectory/fold stability choose inside that set.
+  anchor_selection:
+    strategy: bacc_equivalent_calibrated_stable
+    bacc_noninferiority_margin: 0.002
+    max_sensitivity_drop: 0.005
+    calibration_tolerance: 0.001
+    state_variance_tolerance: 1.0e-5
+    use_state_variance: true
+    require_state_variance: true
+
+  # Complements receive at most 20% total weight and can act only where the
+  # automatically selected anchor is uncertain.
+  anchor_min_weight: 0.80
+  weight_grid_step: 0.01
+  anchor_confidence_low: 0.20
+  anchor_confidence_high: 0.80
+  min_override_agreement: 1
+
+  # BAcc, sensitivity, and specificity remain deployment constraints. Among
+  # feasible blends: Macro-F1 -> AUROC -> AP -> log loss -> simplicity.
+  bacc_noninferiority_margin: 0.003
+  max_oof_sensitivity_drop: 0.005
+  max_oof_specificity_drop: 0.010
+  secondary_metric_tolerance: 0.001
+  min_non_decreasing_folds: 4
+  min_non_decreasing_sensitivity_folds: 4
+  fold_tolerance: 0.005
+  fold_sensitivity_tolerance: 0.005
+
+selection:
+  min_members: 2
+  # One complement keeps the cross-fitted grid small and the deployed rule
+  # interpretable; the complement must itself support any anchor class flip.
+  max_members: 2
+  min_cv_improvement: 0.0
+  max_individual_bacc_gap: 0.03
+  max_individual_sensitivity_gap: 0.01
+
+# Immutable training runs make trajectory and checkpoint selection reproducible.
+architectures:
+  - name: AB_MIL
+    config: configs/Diagnosis/MIL/AB_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/AB_MIL/seed_42_2026-08-03-02-21
+  - name: CLAM_SB_MIL
+    config: configs/Diagnosis/MIL/CLAM_SB_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/CLAM_SB_MIL/seed_42_2026-08-01-23-53
+  - name: CLAM_MB_MIL
+    config: configs/Diagnosis/MIL/CLAM_MB_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/CLAM_MB_MIL/seed_42_2026-08-01-23-54
+  - name: TRANS_MIL
+    config: configs/Diagnosis/MIL/TRANS_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/TRANS_MIL/seed_42_2026-08-01-23-54
+  - name: WIKG_MIL
+    config: configs/Diagnosis/MIL/WIKG_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/WIKG_MIL/seed_42_2026-08-01-23-54
+  - name: MAMBA2D_MIL
+    config: configs/Diagnosis/MIL/MAMBA2D_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MAMBA2D_MIL/seed_42_2026-08-01-23-56
+  - name: AEM_MIL
+    config: configs/Diagnosis/MIL/AEM_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/AEM_MIL/seed_42_2026-08-03-02-22
+  - name: MICO_MIL
+    config: configs/Diagnosis/MIL/MICO_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MICO_MIL/seed_42_2026-08-03-02-23
+  - name: MSM_MIL
+    config: configs/Diagnosis/MIL/MSM_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MSM_MIL/seed_42_2026-08-03-02-24
+  - name: TDA_MIL
+    config: configs/Diagnosis/MIL/TDA_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/TDA_MIL/seed_42_2026-08-03-09-51
+  - name: GDF_MIL
+    config: configs/Diagnosis/MIL/GDF_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/GDF_MIL/seed_42_2026-08-02-23-27
+  - name: RRT_MIL
+    config: configs/Diagnosis/MIL/RRT_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/RRT_MIL/seed_42_2026-08-02-23-21
+  - name: DS_MIL
+    config: configs/Diagnosis/MIL/DS_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/DS_MIL/seed_42_2026-08-02-23-20
+  - name: DTFD_MIL
+    config: configs/Diagnosis/MIL/DTFD_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/DTFD_MIL/seed_42_2026-08-02-23-21

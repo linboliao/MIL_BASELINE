@@ -32,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
 from ensemble.spe import (
+    apply_anchor_decision_guard,
     architecture_disagreement,
     binary_macro_f1,
     class_patient_equal_sample_weights,
@@ -946,6 +947,14 @@ def main(cli: argparse.Namespace | None = None) -> None:
 
     refit_source = None
     if cli.refit_from is not None:
+        configured_anchor_selection = settings.get("aggregation", {}).get(
+            "anchor_selection", {}
+        )
+        requires_exact_checkpoint_policy = (
+            str(checkpoint_selection.get("strategy", "")) == "best_state"
+            or str(configured_anchor_selection.get("strategy", ""))
+            == "bacc_equivalent_calibrated_stable"
+        )
         refit_source = resolve_path(cli.refit_from).resolve()
         oof_path = refit_source / "oof_architecture_predictions.csv"
         test_path = refit_source / "architecture_test_predictions.csv"
@@ -967,19 +976,20 @@ def main(cli: argparse.Namespace | None = None) -> None:
             source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
             run_manifest = source_manifest.get("architectures", {})
             if (
-                str(checkpoint_selection.get("strategy", "")) == "best_state"
+                requires_exact_checkpoint_policy
                 and source_manifest.get("checkpoint_selection") != checkpoint_selection
             ):
                 raise ValueError(
-                    "--refit-from does not use the requested best_state checkpoint "
-                    "policy. Generate a Best-state prediction pool first."
+                    "--refit-from does not use the requested checkpoint policy. "
+                    "Generate a prediction pool with the same checkpoint_selection "
+                    "configuration first."
                 )
         else:
             run_manifest = {}
-            if str(checkpoint_selection.get("strategy", "")) == "best_state":
+            if requires_exact_checkpoint_policy:
                 raise ValueError(
-                    "A best_state --refit-from directory must contain manifest.json "
-                    "so its checkpoint policy can be verified."
+                    "This --refit-from directory must contain manifest.json so its "
+                    "checkpoint policy can be verified."
                 )
         oof = recover_cached_oof_state_variances(
             oof, refit_source, names, run_manifest
@@ -1149,6 +1159,34 @@ def main(cli: argparse.Namespace | None = None) -> None:
     }:
         raise ValueError(f"Unknown aggregation.strategy={aggregation_strategy!r}.")
     elif aggregation_strategy == "top1_anchor_fallback":
+        anchor_selection_settings = aggregation.get("anchor_selection", {})
+        if not isinstance(anchor_selection_settings, dict):
+            raise ValueError("aggregation.anchor_selection must be a mapping.")
+        anchor_selection_strategy = str(
+            anchor_selection_settings.get("strategy", "max_bacc")
+        )
+        anchor_state_variances = None
+        if (
+            anchor_selection_strategy == "bacc_equivalent_calibrated_stable"
+            and bool(anchor_selection_settings.get("use_state_variance", True))
+        ):
+            anchor_state_columns = [f"state_variance_{name}" for name in names]
+            missing_anchor_state_columns = set(anchor_state_columns).difference(
+                oof.columns
+            )
+            if missing_anchor_state_columns:
+                if bool(
+                    anchor_selection_settings.get("require_state_variance", True)
+                ):
+                    raise ValueError(
+                        "Trajectory-aware anchor selection requires OOF checkpoint "
+                        "state variances; missing columns: "
+                        f"{sorted(missing_anchor_state_columns)}"
+                    )
+            else:
+                anchor_state_variances = oof[anchor_state_columns].to_numpy(
+                    dtype=np.float64
+                )
         anchor_guard, anchor_guard_oof_probability, anchor_guard_proposed_oof_probability = (
             select_top1_anchor_with_fallback(
                 probability_matrix,
@@ -1156,6 +1194,32 @@ def main(cli: argparse.Namespace | None = None) -> None:
                 patient_ids=oof["patient_id"].astype(str).to_numpy(),
                 fold_ids=oof["fold"].to_numpy(),
                 architecture_names=names,
+                fixed_anchor_name=aggregation.get("fixed_anchor_name"),
+                anchor_selection_strategy=anchor_selection_strategy,
+                state_variances=anchor_state_variances,
+                anchor_bacc_noninferiority_margin=float(
+                    anchor_selection_settings.get(
+                        "bacc_noninferiority_margin", 0.002
+                    )
+                ),
+                anchor_max_sensitivity_drop=(
+                    None
+                    if (
+                        "max_sensitivity_drop" in anchor_selection_settings
+                        and anchor_selection_settings["max_sensitivity_drop"] is None
+                    )
+                    else float(
+                        anchor_selection_settings.get("max_sensitivity_drop", 0.005)
+                    )
+                ),
+                anchor_calibration_tolerance=float(
+                    anchor_selection_settings.get("calibration_tolerance", 0.001)
+                ),
+                anchor_state_variance_tolerance=float(
+                    anchor_selection_settings.get(
+                        "state_variance_tolerance", 1.0e-5
+                    )
+                ),
                 diversity_lambda=float(weighting.get("diversity_lambda", 0.02)),
                 classification_threshold=threshold,
                 anchor_min_weight=float(aggregation.get("anchor_min_weight", 0.70)),
@@ -1170,22 +1234,75 @@ def main(cli: argparse.Namespace | None = None) -> None:
                     if selection_settings.get("max_individual_bacc_gap") is None
                     else float(selection_settings["max_individual_bacc_gap"])
                 ),
+                max_individual_sensitivity_gap=(
+                    None
+                    if selection_settings.get("max_individual_sensitivity_gap")
+                    is None
+                    else float(
+                        selection_settings["max_individual_sensitivity_gap"]
+                    )
+                ),
                 min_oof_bacc_gain=float(
                     aggregation.get("min_oof_bacc_gain", 0.005)
+                ),
+                bacc_noninferiority_margin=(
+                    None
+                    if aggregation.get("bacc_noninferiority_margin") is None
+                    else float(aggregation["bacc_noninferiority_margin"])
+                ),
+                max_oof_sensitivity_drop=(
+                    None
+                    if aggregation.get("max_oof_sensitivity_drop") is None
+                    else float(aggregation["max_oof_sensitivity_drop"])
+                ),
+                max_oof_specificity_drop=(
+                    None
+                    if aggregation.get("max_oof_specificity_drop") is None
+                    else float(aggregation["max_oof_specificity_drop"])
                 ),
                 min_non_decreasing_folds=int(
                     aggregation.get("min_non_decreasing_folds", 4)
                 ),
+                min_non_decreasing_sensitivity_folds=(
+                    None
+                    if aggregation.get("min_non_decreasing_sensitivity_folds")
+                    is None
+                    else int(
+                        aggregation["min_non_decreasing_sensitivity_folds"]
+                    )
+                ),
                 fold_tolerance=float(aggregation.get("fold_tolerance", 0.0)),
+                fold_sensitivity_tolerance=float(
+                    aggregation.get("fold_sensitivity_tolerance", 0.0)
+                ),
+                anchor_confidence_low=(
+                    None
+                    if aggregation.get("anchor_confidence_low") is None
+                    else float(aggregation["anchor_confidence_low"])
+                ),
+                anchor_confidence_high=(
+                    None
+                    if aggregation.get("anchor_confidence_high") is None
+                    else float(aggregation["anchor_confidence_high"])
+                ),
+                min_override_agreement=int(
+                    aggregation.get("min_override_agreement", 0)
+                ),
+                secondary_metric_tolerance=float(
+                    aggregation.get("secondary_metric_tolerance", 0.001)
+                ),
             )
         )
         selection = anchor_guard
         selected_names = list(anchor_guard.deployed_names)
         mode = "Top1 fallback" if anchor_guard.fallback_triggered else "anchored ensemble"
         print(
-            f"Top1-anchor guard: anchor={anchor_guard.anchor_name}, "
+            f"Anchor guard: anchor={anchor_guard.anchor_name}, "
             f"proposal={list(anchor_guard.proposed_selected_names)}, "
             f"OOF gain={anchor_guard.balanced_accuracy_gain:.6f}, "
+            f"sensitivity gain={anchor_guard.sensitivity_gain:.6f}, "
+            f"macro-F1={anchor_guard.ensemble_macro_f1:.6f}, "
+            f"AUROC={anchor_guard.ensemble_roc_auc:.6f}, "
             f"non-decreasing folds={anchor_guard.non_decreasing_folds}/"
             f"{len(anchor_guard.fold_diagnostics)} -> {mode}"
         )
@@ -1538,9 +1655,54 @@ def main(cli: argparse.Namespace | None = None) -> None:
         final["prob_1"] = test_matrix @ architecture_weights
     if anchor_guard is not None:
         anchor_index = names.index(anchor_guard.anchor_name)
-        final["top1_anchor_prob_1"] = test_matrix[:, anchor_index]
-        final["proposed_anchor_ensemble_prob_1"] = test_matrix @ np.asarray(
+        anchor_test_probability = test_matrix[:, anchor_index]
+        proposed_weights = np.asarray(
             anchor_guard.proposed_weights, dtype=np.float64
+        )
+        proposed_complements = [
+            index
+            for index, weight in enumerate(proposed_weights)
+            if index != anchor_index and weight > 1e-12
+        ]
+        proposed_test_probability = apply_anchor_decision_guard(
+            anchor_test_probability,
+            test_matrix @ proposed_weights,
+            test_matrix[:, proposed_complements],
+            decision_threshold,
+            anchor_guard.anchor_confidence_low,
+            anchor_guard.anchor_confidence_high,
+            anchor_guard.min_override_agreement,
+        )
+        deployed_complements = [
+            index
+            for index, weight in enumerate(architecture_weights)
+            if index != anchor_index and weight > 1e-12
+        ]
+        deployed_test_probability = apply_anchor_decision_guard(
+            anchor_test_probability,
+            test_matrix @ architecture_weights,
+            test_matrix[:, deployed_complements],
+            decision_threshold,
+            anchor_guard.anchor_confidence_low,
+            anchor_guard.anchor_confidence_high,
+            anchor_guard.min_override_agreement,
+        )
+        final["prob_1"] = deployed_test_probability
+        final["top1_anchor_prob_1"] = anchor_test_probability
+        final["proposed_anchor_ensemble_prob_1"] = proposed_test_probability
+        final["anchor_confidence_protected"] = (
+            (anchor_test_probability <= anchor_guard.anchor_confidence_low)
+            | (anchor_test_probability >= anchor_guard.anchor_confidence_high)
+            if anchor_guard.anchor_confidence_low is not None
+            else False
+        )
+        raw_proposed_prediction = (test_matrix @ proposed_weights) >= decision_threshold
+        final["anchor_override_blocked"] = (
+            (raw_proposed_prediction != (anchor_test_probability >= decision_threshold))
+            & (
+                (proposed_test_probability >= decision_threshold)
+                == (anchor_test_probability >= decision_threshold)
+            )
         )
         final["automatic_fallback_applied"] = anchor_guard.fallback_triggered
         final["deployment_mode"] = (
@@ -1585,10 +1747,22 @@ def main(cli: argparse.Namespace | None = None) -> None:
         temporary_checkpoint.replace(checkpoint_path)
 
     config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
+    top1_uses_trajectory_states = (
+        aggregation_strategy == "top1_anchor_fallback"
+        and str(checkpoint_selection.get("strategy", "")) != "best_state"
+    )
     manifest = {
         "schema_version": 2 if aggregation_strategy == "top1_anchor_fallback" else 1,
         "method": (
-            "best-state-top1-anchor-automatic-fallback"
+            (
+                "trajectory-state-robust-anchor-automatic-fallback"
+                if top1_uses_trajectory_states
+                else (
+                    "best-state-fixed-anchor-automatic-fallback"
+                    if anchor_guard is not None and anchor_guard.fixed_anchor
+                    else "best-state-top1-anchor-automatic-fallback"
+                )
+            )
             if aggregation_strategy == "top1_anchor_fallback"
             else "stability-prioritized-hierarchical-ensemble"
         ),
@@ -1603,9 +1777,27 @@ def main(cli: argparse.Namespace | None = None) -> None:
         ),
         "design_story": (
             [
-                "one_best_state_per_fold",
-                "development_oof_top1_anchor",
+                (
+                    "validation_trajectory_checkpoint_averaging"
+                    if top1_uses_trajectory_states
+                    else "one_best_state_per_fold"
+                ),
+                (
+                    "locked_fixed_anchor"
+                    if anchor_guard is not None and anchor_guard.fixed_anchor
+                    else (
+                        "development_oof_bacc_equivalent_calibrated_stable_anchor"
+                        if anchor_guard is not None
+                        and anchor_guard.anchor_selection_strategy
+                        == "bacc_equivalent_calibrated_stable"
+                        else "development_oof_top1_anchor"
+                    )
+                ),
                 "bounded_complement_risk_budget",
+                "confidence_and_consensus_override_guard",
+                "balanced_accuracy_noninferiority_feasible_set",
+                "lexicographic_secondary_metric_optimization",
+                "sensitivity_noninferiority_guardrail",
                 "oof_gain_and_fold_stability_guardrail",
                 "automatic_top1_fallback",
             ]
