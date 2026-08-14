@@ -1,0 +1,98 @@
+experiment:
+  name: clam_sb_robust_anchor
+  device: cuda:0
+  num_workers: 0
+  preload: false
+  classification_threshold: 0.5
+  development_dataset_root: datasets/Diagnosis/Stains/Reinhard
+  independent_test_dataset_root: datasets/Diagnosis/MIL
+  output_root: result/Diagnosis/SPE
+
+# Keep the state-level comparison identical to the direct MIL baselines.
+checkpoint_selection:
+  strategy: best_state
+
+weighting:
+  diversity_lambda: 0.02
+  class_balance: true
+
+aggregation:
+  strategy: top1_anchor_fallback
+  # The anchor is a clinical choice locked before independent evaluation; it
+  # is not replaced by whichever architecture wins on a particular OOF split.
+  fixed_anchor_name: CLAM_SB_MIL
+  anchor_min_weight: 0.80
+  weight_grid_step: 0.01
+
+  # Other architectures may alter only uncertain CLAM-SB predictions.
+  anchor_confidence_low: 0.20
+  anchor_confidence_high: 0.80
+  # A class flip must be supported by both active complementary models.
+  min_override_agreement: 2
+
+  # BAcc is a performance floor rather than an unconstrained objective.
+  bacc_noninferiority_margin: 0.003
+  max_oof_sensitivity_drop: 0.005
+  max_oof_specificity_drop: 0.010
+
+  # Within the feasible set: Macro-F1 -> AUROC -> AP -> log loss -> simplicity.
+  secondary_metric_tolerance: 0.001
+
+  # Both endpoints must be non-inferior in at least four of five held-out folds.
+  min_non_decreasing_folds: 4
+  min_non_decreasing_sensitivity_folds: 4
+  fold_tolerance: 0.005
+  fold_sensitivity_tolerance: 0.005
+
+selection:
+  min_members: 2
+  max_members: 3
+  min_cv_improvement: 0.0
+  max_individual_bacc_gap: 0.03
+  # Reject a complement whose own OOF sensitivity trails CLAM-SB by >1 point.
+  max_individual_sensitivity_gap: 0.01
+
+# Immutable run directories keep Best_EPOCH inference reproducible.
+architectures:
+  - name: AB_MIL
+    config: configs/Diagnosis/MIL/AB_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/AB_MIL/seed_42_2026-08-03-02-21
+  - name: CLAM_SB_MIL
+    config: configs/Diagnosis/MIL/CLAM_SB_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/CLAM_SB_MIL/seed_42_2026-08-01-23-53
+  - name: CLAM_MB_MIL
+    config: configs/Diagnosis/MIL/CLAM_MB_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/CLAM_MB_MIL/seed_42_2026-08-01-23-54
+  - name: TRANS_MIL
+    config: configs/Diagnosis/MIL/TRANS_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/TRANS_MIL/seed_42_2026-08-01-23-54
+  - name: WIKG_MIL
+    config: configs/Diagnosis/MIL/WIKG_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/WIKG_MIL/seed_42_2026-08-01-23-54
+  - name: MAMBA2D_MIL
+    config: configs/Diagnosis/MIL/MAMBA2D_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MAMBA2D_MIL/seed_42_2026-08-01-23-56
+  - name: AEM_MIL
+    config: configs/Diagnosis/MIL/AEM_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/AEM_MIL/seed_42_2026-08-03-02-22
+  - name: MICO_MIL
+    config: configs/Diagnosis/MIL/MICO_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MICO_MIL/seed_42_2026-08-03-02-23
+  - name: MSM_MIL
+    config: configs/Diagnosis/MIL/MSM_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MSM_MIL/seed_42_2026-08-03-02-24
+  - name: TDA_MIL
+    config: configs/Diagnosis/MIL/TDA_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/TDA_MIL/seed_42_2026-08-03-09-51
+  - name: GDF_MIL
+    config: configs/Diagnosis/MIL/GDF_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/GDF_MIL/seed_42_2026-08-02-23-27
+  - name: RRT_MIL
+    config: configs/Diagnosis/MIL/RRT_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/RRT_MIL/seed_42_2026-08-02-23-21
+  - name: DS_MIL
+    config: configs/Diagnosis/MIL/DS_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/DS_MIL/seed_42_2026-08-02-23-20
+  - name: DTFD_MIL
+    config: configs/Diagnosis/MIL/DTFD_MIL.yaml
+    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/DTFD_MIL/seed_42_2026-08-02-23-21

@@ -190,12 +190,119 @@ def _evenly_spaced_records(
     return [records[index] for index in indices]
 
 
-def selected_checkpoints(
+def _checkpoint_metric(record: dict[str, Any], metric: str) -> float | None:
+    """Read a validation metric, deriving class recalls when necessary."""
+    metrics = record.get("val_metrics", {})
+    aliases = {
+        "balanced_accuracy": "bacc",
+        "balanced_acc": "bacc",
+        "macro-f1": "macro_f1",
+        "sensitivity": "sensitivity",
+        "recall_positive": "sensitivity",
+        "tpr": "sensitivity",
+        "specificity": "specificity",
+        "recall_negative": "specificity",
+        "tnr": "specificity",
+    }
+    normalized = aliases.get(str(metric).strip().lower(), str(metric).strip())
+    value = metrics.get(normalized)
+    if isinstance(value, (int, float)) and np.isfinite(float(value)):
+        return float(value)
+
+    if normalized not in {"sensitivity", "specificity"}:
+        return None
+    confusion = metrics.get("confusion_mat")
+    try:
+        tn, fp = float(confusion[0][0]), float(confusion[0][1])
+        fn, tp = float(confusion[1][0]), float(confusion[1][1])
+    except (IndexError, TypeError, ValueError):
+        return None
+    numerator, denominator = (
+        (tp, tp + fn) if normalized == "sensitivity" else (tn, tn + fp)
+    )
+    return numerator / denominator if denominator > 0 else None
+
+
+def _contiguous_checkpoint_runs(
+    records: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    runs: list[list[dict[str, Any]]] = []
+    for record in sorted(records, key=lambda item: int(item["epoch"])):
+        if not runs or int(record["epoch"]) != int(runs[-1][-1]["epoch"]) + 1:
+            runs.append([record])
+        else:
+            runs[-1].append(record)
+    return runs
+
+
+def _stable_basin_candidates(
+    records: list[dict[str, Any]],
+    min_consecutive: int,
+    range_limits: dict[str, float],
+) -> list[list[dict[str, Any]]]:
+    """Enumerate contiguous windows whose whole-window ranges are stable."""
+    candidates: list[list[dict[str, Any]]] = []
+    for run in _contiguous_checkpoint_runs(records):
+        for start in range(len(run)):
+            for stop in range(start + min_consecutive, len(run) + 1):
+                window = run[start:stop]
+                stable = True
+                for metric, limit in range_limits.items():
+                    values = [_checkpoint_metric(record, metric) for record in window]
+                    if any(value is None for value in values):
+                        stable = False
+                        break
+                    numeric = [float(value) for value in values if value is not None]
+                    if max(numeric) - min(numeric) > limit + 1e-12:
+                        stable = False
+                        break
+                if stable:
+                    candidates.append(window)
+    return candidates
+
+
+def _best_stable_basin(
+    candidates: list[list[dict[str, Any]]],
+    metric: str,
+    secondary_metric: str | None,
+) -> list[dict[str, Any]] | None:
+    if not candidates:
+        return None
+
+    def score(window: list[dict[str, Any]]) -> tuple[float, ...]:
+        primary = np.asarray(
+            [_checkpoint_metric(record, metric) for record in window], dtype=float
+        )
+        if secondary_metric is None:
+            secondary = np.asarray([0.0])
+        else:
+            secondary = np.asarray(
+                [_checkpoint_metric(record, secondary_metric) for record in window],
+                dtype=float,
+            )
+        # Maximin performance first. Low within-window variation and a broad
+        # basin break ties before preferring the later of otherwise equal runs.
+        return (
+            float(primary.min()),
+            float(primary.mean()),
+            float(secondary.min()),
+            float(secondary.mean()),
+            -float(primary.std(ddof=0)),
+            float(len(window)),
+            float(window[-1]["epoch"]),
+        )
+
+    return max(candidates, key=score)
+
+
+def selected_checkpoints_with_details(
     fold_dir: Path,
     policy: dict[str, Any] | None = None,
-) -> list[Path]:
+) -> tuple[list[Path], dict[str, Any]]:
+    """Select checkpoints and return an auditable description of the decision."""
     policy = policy or {}
     strategy = str(policy.get("strategy", "precomputed_stability"))
+    details: dict[str, Any] = {"strategy": strategy, "fallback_used": False}
     if strategy == "best_state":
         checkpoints = sorted(fold_dir.glob("Best_EPOCH_*.pth"))
         if len(checkpoints) != 1:
@@ -203,7 +310,8 @@ def selected_checkpoints(
                 f"Expected exactly one Best_EPOCH checkpoint in {fold_dir}, "
                 f"found {len(checkpoints)}."
             )
-    elif strategy == "high_performance_band":
+        details["selection_tier"] = "best_state"
+    elif strategy in {"high_performance_band", "high_performance_stable_basin"}:
         manifest_path = fold_dir / "checkpoint_manifest.json"
         if not manifest_path.is_file():
             raise FileNotFoundError(f"Missing checkpoint trajectory: {manifest_path}")
@@ -220,23 +328,169 @@ def selected_checkpoints(
             record
             for record in manifest.get("epochs", [])
             if record.get("checkpoint")
-            and isinstance(record.get("val_metrics", {}).get(metric), (int, float))
+            and _checkpoint_metric(record, metric) is not None
         ]
         if not records:
             raise ValueError(
                 f"No checkpoints in {manifest_path} contain val_metrics.{metric}."
             )
-        best_metric = max(float(record["val_metrics"][metric]) for record in records)
-        eligible = sorted(
-            (
-                record
-                for record in records
-                if float(record["val_metrics"][metric]) >= best_metric - tolerance
-            ),
-            key=lambda record: int(record["epoch"]),
+        records.sort(key=lambda record: int(record["epoch"]))
+        best_metric = max(float(_checkpoint_metric(record, metric)) for record in records)
+        primary_band = [
+            record
+            for record in records
+            if float(_checkpoint_metric(record, metric)) >= best_metric - tolerance
+        ]
+        details.update(
+            {
+                "metric": metric,
+                "best_metric_value": best_metric,
+                "metric_tolerance": tolerance,
+                "eligible_checkpoint_count": len(primary_band),
+            }
         )
-        chosen = _evenly_spaced_records(eligible, max_checkpoints)
+
+        if strategy == "high_performance_band":
+            chosen = _evenly_spaced_records(primary_band, max_checkpoints)
+            details["selection_tier"] = "high_performance_band"
+        else:
+            min_consecutive = int(policy.get("min_consecutive", 5))
+            metric_range_tolerance = float(
+                policy.get("metric_range_tolerance", 0.003)
+            )
+            sensitivity_range_tolerance = float(
+                policy.get("sensitivity_range_tolerance", 0.01)
+            )
+            specificity_range_tolerance = float(
+                policy.get("specificity_range_tolerance", 0.01)
+            )
+            secondary_value = policy.get("secondary_metric", "macro_f1")
+            secondary_metric = (
+                None
+                if secondary_value is None or str(secondary_value).strip() == ""
+                else str(secondary_value)
+            )
+            secondary_tolerance = float(
+                policy.get("secondary_metric_tolerance", tolerance)
+            )
+            allow_fallback = bool(policy.get("allow_fallback", True))
+            numeric_limits = {
+                "metric_range_tolerance": metric_range_tolerance,
+                "sensitivity_range_tolerance": sensitivity_range_tolerance,
+                "specificity_range_tolerance": specificity_range_tolerance,
+                "secondary_metric_tolerance": secondary_tolerance,
+            }
+            if min_consecutive < 2:
+                raise ValueError("checkpoint_selection.min_consecutive must be >= 2.")
+            if any(value < 0 for value in numeric_limits.values()):
+                raise ValueError(
+                    "Stable-basin checkpoint tolerances must be non-negative."
+                )
+
+            secondary_band = primary_band
+            best_secondary: float | None = None
+            if secondary_metric is not None:
+                secondary_records = [
+                    record
+                    for record in records
+                    if _checkpoint_metric(record, secondary_metric) is not None
+                ]
+                if not secondary_records:
+                    raise ValueError(
+                        f"No checkpoints in {manifest_path} contain "
+                        f"val_metrics.{secondary_metric}."
+                    )
+                best_secondary = max(
+                    float(_checkpoint_metric(record, secondary_metric))
+                    for record in secondary_records
+                )
+                secondary_band = [
+                    record
+                    for record in primary_band
+                    if _checkpoint_metric(record, secondary_metric) is not None
+                    and float(_checkpoint_metric(record, secondary_metric))
+                    >= best_secondary - secondary_tolerance
+                ]
+
+            strict_limits = {
+                metric: metric_range_tolerance,
+                "sensitivity": sensitivity_range_tolerance,
+                "specificity": specificity_range_tolerance,
+            }
+            tiers: list[tuple[str, list[dict[str, Any]], dict[str, float]]] = [
+                ("strict_stable_basin", secondary_band, strict_limits),
+                (
+                    "class_relaxed_stable_basin",
+                    secondary_band,
+                    {metric: metric_range_tolerance},
+                ),
+                (
+                    "primary_stable_basin",
+                    primary_band,
+                    {metric: metric_range_tolerance},
+                ),
+            ]
+            retained: list[dict[str, Any]] | None = None
+            attempted: list[dict[str, Any]] = []
+            previous_signature: tuple[tuple[int, ...], tuple[tuple[str, float], ...]] | None = None
+            for tier, eligible, range_limits in tiers:
+                signature = (
+                    tuple(int(record["epoch"]) for record in eligible),
+                    tuple(sorted(range_limits.items())),
+                )
+                if signature == previous_signature:
+                    continue
+                previous_signature = signature
+                candidates = _stable_basin_candidates(
+                    eligible, min_consecutive, range_limits
+                )
+                attempted.append(
+                    {
+                        "tier": tier,
+                        "eligible_checkpoint_count": len(eligible),
+                        "candidate_window_count": len(candidates),
+                    }
+                )
+                retained = _best_stable_basin(
+                    candidates, metric, secondary_metric
+                )
+                if retained is not None:
+                    details["selection_tier"] = tier
+                    break
+
+            if retained is None:
+                if not allow_fallback:
+                    raise ValueError(
+                        f"No high-performance stable basin was found in {manifest_path}; "
+                        "set allow_fallback=true or relax the validation-only tolerances."
+                    )
+                retained = primary_band
+                details["selection_tier"] = "high_performance_band_fallback"
+            chosen = _evenly_spaced_records(retained, max_checkpoints)
+            details.update(
+                {
+                    "secondary_metric": secondary_metric,
+                    "best_secondary_metric_value": best_secondary,
+                    "secondary_metric_tolerance": secondary_tolerance,
+                    "min_consecutive": min_consecutive,
+                    "metric_range_tolerance": metric_range_tolerance,
+                    "sensitivity_range_tolerance": sensitivity_range_tolerance,
+                    "specificity_range_tolerance": specificity_range_tolerance,
+                    "attempted_tiers": attempted,
+                    "retained_interval": {
+                        "start_epoch": int(retained[0]["epoch"]),
+                        "end_epoch": int(retained[-1]["epoch"]),
+                        "checkpoint_count": len(retained),
+                    },
+                }
+            )
+            details["fallback_used"] = details["selection_tier"] != "strict_stable_basin"
+
         checkpoints = [fold_dir / str(record["checkpoint"]) for record in chosen]
+        details["selected_epochs"] = [int(record["epoch"]) for record in chosen]
+        details["selected_metric_values"] = [
+            float(_checkpoint_metric(record, metric)) for record in chosen
+        ]
     elif strategy == "precomputed_stability":
         selection_path = fold_dir / "spe_checkpoint_selection.json"
         if not selection_path.is_file():
@@ -248,10 +502,7 @@ def selected_checkpoints(
         selection = json.loads(selection_path.read_text(encoding="utf-8"))
         expected_metric = policy.get("metric")
         selected_metric = selection.get("spe_metric")
-        if (
-            expected_metric is not None
-            and str(selected_metric) != str(expected_metric)
-        ):
+        if expected_metric is not None and str(selected_metric) != str(expected_metric):
             raise ValueError(
                 f"{selection_path} was built with spe_metric={selected_metric!r}, "
                 f"expected {expected_metric!r}."
@@ -262,11 +513,27 @@ def selected_checkpoints(
                 f"{selection_path} must select 1..5 checkpoints, found {len(records)}."
             )
         checkpoints = [fold_dir / str(record["checkpoint"]) for record in records]
+        details.update(
+            {
+                "selection_tier": "precomputed_stability",
+                "fallback_used": bool(selection.get("fallback_used", False)),
+                "selected_epochs": [int(record["epoch"]) for record in records],
+            }
+        )
     else:
         raise ValueError(f"Unknown checkpoint_selection.strategy={strategy!r}.")
     missing = [path for path in checkpoints if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"Selected checkpoint files are missing: {missing}")
+    details["selected_checkpoints"] = [str(path) for path in checkpoints]
+    return checkpoints, details
+
+
+def selected_checkpoints(
+    fold_dir: Path,
+    policy: dict[str, Any] | None = None,
+) -> list[Path]:
+    checkpoints, _ = selected_checkpoints_with_details(fold_dir, policy)
     return checkpoints
 
 
@@ -724,13 +991,13 @@ def run_architecture(
     architecture_root = work_root / name / run_dir.name
     fold_oof: list[pd.DataFrame] = []
     fold_test: list[pd.DataFrame] = []
-    checkpoint_manifest: dict[str, list[str]] = {}
+    checkpoint_manifest: dict[str, dict[str, Any]] = {}
 
     for fold in range(1, 6):
-        checkpoints = selected_checkpoints(
+        checkpoints, checkpoint_details = selected_checkpoints_with_details(
             run_dir / f"fold_{fold}", checkpoint_selection
         )
-        checkpoint_manifest[str(fold)] = [str(path) for path in checkpoints]
+        checkpoint_manifest[str(fold)] = checkpoint_details
         outputs: dict[str, pd.DataFrame] = {}
         for split, dataset_csv in (("val", development_folds[fold]), ("test", test_folds[fold])):
             metadata = split_metadata(dataset_csv, split).drop(columns="slide_path")
@@ -953,7 +1220,10 @@ def main(cli: argparse.Namespace | None = None) -> None:
         requires_exact_checkpoint_policy = (
             str(checkpoint_selection.get("strategy", "")) == "best_state"
             or str(configured_anchor_selection.get("strategy", ""))
-            == "bacc_equivalent_calibrated_stable"
+            in {
+                "bacc_equivalent_calibrated_stable",
+                "bacc_equivalent_maximin_stable",
+            }
         )
         refit_source = resolve_path(cli.refit_from).resolve()
         oof_path = refit_source / "oof_architecture_predictions.csv"
@@ -1167,7 +1437,11 @@ def main(cli: argparse.Namespace | None = None) -> None:
         )
         anchor_state_variances = None
         if (
-            anchor_selection_strategy == "bacc_equivalent_calibrated_stable"
+            anchor_selection_strategy
+            in {
+                "bacc_equivalent_calibrated_stable",
+                "bacc_equivalent_maximin_stable",
+            }
             and bool(anchor_selection_settings.get("use_state_variance", True))
         ):
             anchor_state_columns = [f"state_variance_{name}" for name in names]
@@ -1786,11 +2060,17 @@ def main(cli: argparse.Namespace | None = None) -> None:
                     "locked_fixed_anchor"
                     if anchor_guard is not None and anchor_guard.fixed_anchor
                     else (
-                        "development_oof_bacc_equivalent_calibrated_stable_anchor"
+                        "development_oof_bacc_equivalent_maximin_stable_anchor"
                         if anchor_guard is not None
                         and anchor_guard.anchor_selection_strategy
-                        == "bacc_equivalent_calibrated_stable"
-                        else "development_oof_top1_anchor"
+                        == "bacc_equivalent_maximin_stable"
+                        else (
+                            "development_oof_bacc_equivalent_calibrated_stable_anchor"
+                            if anchor_guard is not None
+                            and anchor_guard.anchor_selection_strategy
+                            == "bacc_equivalent_calibrated_stable"
+                            else "development_oof_top1_anchor"
+                        )
                     )
                 ),
                 "bounded_complement_risk_budget",

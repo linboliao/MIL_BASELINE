@@ -128,6 +128,7 @@ class MacroF1Selection:
 class DevelopmentRobustAnchorSelection:
     """Development-only anchor selected under accuracy and stability constraints."""
 
+    strategy: str
     candidate_names: tuple[str, ...]
     accuracy_eligible_names: tuple[str, ...]
     eligible_names: tuple[str, ...]
@@ -143,15 +144,14 @@ class DevelopmentRobustAnchorSelection:
     individual_specificities: tuple[float, ...]
     class_patient_equal_log_losses: tuple[float, ...]
     mean_state_variances: tuple[float | None, ...]
+    fold_mean_balanced_accuracies: tuple[float, ...]
     fold_bacc_standard_deviations: tuple[float, ...]
     worst_fold_balanced_accuracies: tuple[float, ...]
     state_variance_used: bool
     selection_order: tuple[str, ...]
 
     def as_dict(self) -> dict:
-        values = asdict(self)
-        values["strategy"] = "bacc_equivalent_calibrated_stable"
-        return values
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -1492,16 +1492,17 @@ def select_development_robust_anchor(
     max_sensitivity_drop: float | None = 0.005,
     calibration_tolerance: float = 0.001,
     state_variance_tolerance: float = 1.0e-5,
+    selection_strategy: str = "bacc_equivalent_calibrated_stable",
 ) -> DevelopmentRobustAnchorSelection:
     """Choose a general-purpose anchor from development OOF predictions.
 
     Balanced Accuracy defines an equivalence set rather than forcing the
     numerically best architecture to become the anchor.  A sensitivity floor
-    is applied inside that set.  Remaining candidates are ranked by
-    class/patient-equal calibration, checkpoint-state variance, and fold
-    stability.  Calibration and state variance are discretized at configured
-    resolutions before the later criteria are considered, which avoids
-    treating numerical noise as a meaningful difference.
+    is applied inside that set. ``bacc_equivalent_calibrated_stable`` ranks by
+    calibration and checkpoint stability. ``bacc_equivalent_maximin_stable``
+    ranks by worst-fold BAcc, mean-fold BAcc, fold dispersion, checkpoint-state
+    variance, and calibration. Calibration and state variance are discretized
+    at configured resolutions to avoid treating numerical noise as meaningful.
 
     ``state_variances`` must contain the per-sample variance across validation-
     selected checkpoint states.  Independent-test labels or metrics are never
@@ -1528,6 +1529,14 @@ def select_development_robust_anchor(
         raise ValueError("max_sensitivity_drop must be non-negative or null.")
     if calibration_tolerance <= 0 or state_variance_tolerance <= 0:
         raise ValueError("Anchor metric tolerances must be positive.")
+    allowed_strategies = {
+        "bacc_equivalent_calibrated_stable",
+        "bacc_equivalent_maximin_stable",
+    }
+    if selection_strategy not in allowed_strategies:
+        raise ValueError(
+            f"selection_strategy must be one of {sorted(allowed_strategies)}."
+        )
 
     unique_folds = np.unique(folds)
     if len(unique_folds) < 2:
@@ -1605,6 +1614,7 @@ def select_development_robust_anchor(
             "Every OOF fold must contain both classes for robust anchor selection."
         )
     fold_bacc_std = np.std(fold_scores, axis=0)
+    fold_bacc_mean = np.mean(fold_scores, axis=0)
     worst_fold_bacc = np.min(fold_scores, axis=0)
 
     best_index = min(
@@ -1639,6 +1649,22 @@ def select_development_robust_anchor(
             if state_array is not None
             else 0
         )
+        if selection_strategy == "bacc_equivalent_maximin_stable":
+            return (
+                -float(worst_fold_bacc[index]),
+                -float(fold_bacc_mean[index]),
+                float(fold_bacc_std[index]),
+                variance_bucket,
+                resolution_bucket(log_losses[index], calibration_tolerance),
+                (
+                    float(mean_state_variances[index])
+                    if state_array is not None
+                    else 0.0
+                ),
+                float(log_losses[index]),
+                -float(individual_bacc[index]),
+                names[index],
+            )
         return (
             resolution_bucket(log_losses[index], calibration_tolerance),
             variance_bucket,
@@ -1656,6 +1682,7 @@ def select_development_robust_anchor(
 
     selected_index = min(eligible, key=selection_key)
     return DevelopmentRobustAnchorSelection(
+        strategy=selection_strategy,
         candidate_names=names,
         accuracy_eligible_names=tuple(names[index] for index in accuracy_eligible),
         eligible_names=tuple(names[index] for index in eligible),
@@ -1680,6 +1707,9 @@ def select_development_robust_anchor(
             None if not np.isfinite(value) else float(value)
             for value in mean_state_variances
         ),
+        fold_mean_balanced_accuracies=tuple(
+            float(value) for value in fold_bacc_mean
+        ),
         fold_bacc_standard_deviations=tuple(
             float(value) for value in fold_bacc_std
         ),
@@ -1688,12 +1718,24 @@ def select_development_robust_anchor(
         ),
         state_variance_used=state_array is not None,
         selection_order=(
-            "bacc_noninferiority_set",
-            "sensitivity_floor",
-            "class_patient_equal_log_loss",
-            "checkpoint_state_variance",
-            "fold_bacc_standard_deviation",
-            "worst_fold_bacc",
+            (
+                "bacc_noninferiority_set",
+                "sensitivity_floor",
+                "worst_fold_bacc",
+                "mean_fold_bacc",
+                "fold_bacc_standard_deviation",
+                "checkpoint_state_variance",
+                "class_patient_equal_log_loss",
+            )
+            if selection_strategy == "bacc_equivalent_maximin_stable"
+            else (
+                "bacc_noninferiority_set",
+                "sensitivity_floor",
+                "class_patient_equal_log_loss",
+                "checkpoint_state_variance",
+                "fold_bacc_standard_deviation",
+                "worst_fold_bacc",
+            )
         ),
     )
 
@@ -1758,7 +1800,11 @@ def select_top1_anchor_with_fallback(
         raise ValueError("Labels/patient IDs/fold IDs do not match probability rows.")
     if len(names) != architecture_count or len(set(names)) != architecture_count:
         raise ValueError("architecture_names must uniquely match probability columns.")
-    allowed_anchor_strategies = {"max_bacc", "bacc_equivalent_calibrated_stable"}
+    allowed_anchor_strategies = {
+        "max_bacc",
+        "bacc_equivalent_calibrated_stable",
+        "bacc_equivalent_maximin_stable",
+    }
     if anchor_selection_strategy not in allowed_anchor_strategies:
         raise ValueError(
             "anchor_selection_strategy must be one of "
@@ -1856,7 +1902,10 @@ def select_top1_anchor_with_fallback(
             )
         anchor = names.index(fixed_anchor_name)
         effective_anchor_strategy = "fixed"
-    elif anchor_selection_strategy == "bacc_equivalent_calibrated_stable":
+    elif anchor_selection_strategy in {
+        "bacc_equivalent_calibrated_stable",
+        "bacc_equivalent_maximin_stable",
+    }:
         robust_anchor_selection = select_development_robust_anchor(
             probabilities,
             labels=labels_array,
@@ -1869,6 +1918,7 @@ def select_top1_anchor_with_fallback(
             max_sensitivity_drop=anchor_max_sensitivity_drop,
             calibration_tolerance=anchor_calibration_tolerance,
             state_variance_tolerance=anchor_state_variance_tolerance,
+            selection_strategy=anchor_selection_strategy,
         )
         anchor = names.index(robust_anchor_selection.selected_name)
         effective_anchor_strategy = anchor_selection_strategy

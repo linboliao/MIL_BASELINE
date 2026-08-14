@@ -4,17 +4,27 @@ experiment:
   num_workers: 0
   preload: false
   classification_threshold: 0.5
-  development_dataset_root: datasets/Diagnosis/Stains/Reinhard
+  development_dataset_root: datasets/Diagnosis/MIL_Mix
   independent_test_dataset_root: datasets/Diagnosis/MIL
   output_root: result/Diagnosis/SPE
 
-# Use validation trajectories only. For each architecture/fold, average up to
-# five checkpoints lying within 0.005 BAcc of that fold's best validation epoch.
+# Use validation trajectories only. Prefer a contiguous high-performance basin:
+# every state stays close to the fold's best BAcc/Macro-F1 and the whole window
+# is stable in BAcc, sensitivity, and specificity. If class-wise stability is
+# unavailable, relax class ranges first and only then fall back to the original
+# high-performance band. Independent-test labels never enter this decision.
 checkpoint_selection:
-  strategy: high_performance_band
+  strategy: high_performance_stable_basin
   metric: bacc
   metric_tolerance: 0.005
+  secondary_metric: macro_f1
+  secondary_metric_tolerance: 0.005
+  min_consecutive: 5
+  metric_range_tolerance: 0.003
+  sensitivity_range_tolerance: 0.010
+  specificity_range_tolerance: 0.010
   max_checkpoints: 5
+  allow_fallback: true
 
 weighting:
   diversity_lambda: 0.02
@@ -26,7 +36,7 @@ aggregation:
   # General development-only anchor rule. BAcc first defines an equivalence
   # set; calibration and trajectory/fold stability choose inside that set.
   anchor_selection:
-    strategy: bacc_equivalent_calibrated_stable
+    strategy: bacc_equivalent_maximin_stable
     bacc_noninferiority_margin: 0.002
     max_sensitivity_drop: 0.005
     calibration_tolerance: 0.001
@@ -66,43 +76,43 @@ selection:
 architectures:
   - name: AB_MIL
     config: configs/Diagnosis/MIL/AB_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/AB_MIL/seed_42_2026-08-03-02-21
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/AB_MIL/seed_42_2026-08-12-23-27
   - name: CLAM_SB_MIL
     config: configs/Diagnosis/MIL/CLAM_SB_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/CLAM_SB_MIL/seed_42_2026-08-01-23-53
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/CLAM_SB_MIL/seed_42_2026-08-13-09-45
   - name: CLAM_MB_MIL
     config: configs/Diagnosis/MIL/CLAM_MB_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/CLAM_MB_MIL/seed_42_2026-08-01-23-54
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/CLAM_MB_MIL/seed_42_2026-08-13-09-44
   - name: TRANS_MIL
     config: configs/Diagnosis/MIL/TRANS_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/TRANS_MIL/seed_42_2026-08-01-23-54
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/TRANS_MIL/seed_42_2026-08-13-09-56
   - name: WIKG_MIL
     config: configs/Diagnosis/MIL/WIKG_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/WIKG_MIL/seed_42_2026-08-01-23-54
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/WIKG_MIL/seed_42_2026-08-13-09-58
   - name: MAMBA2D_MIL
     config: configs/Diagnosis/MIL/MAMBA2D_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MAMBA2D_MIL/seed_42_2026-08-01-23-56
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/MAMBA2D_MIL/seed_42_2026-08-13-09-52
   - name: AEM_MIL
     config: configs/Diagnosis/MIL/AEM_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/AEM_MIL/seed_42_2026-08-03-02-22
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/AEM_MIL/seed_42_2026-08-13-04-31
   - name: MICO_MIL
     config: configs/Diagnosis/MIL/MICO_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MICO_MIL/seed_42_2026-08-03-02-23
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/MICO_MIL/seed_42_2026-08-12-23-23
   - name: MSM_MIL
     config: configs/Diagnosis/MIL/MSM_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/MSM_MIL/seed_42_2026-08-03-02-24
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/MSM_MIL/seed_42_2026-08-13-08-16
   - name: TDA_MIL
     config: configs/Diagnosis/MIL/TDA_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/TDA_MIL/seed_42_2026-08-03-09-51
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/TDA_MIL/seed_42_2026-08-13-09-56
   - name: GDF_MIL
     config: configs/Diagnosis/MIL/GDF_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/GDF_MIL/seed_42_2026-08-02-23-27
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/GDF_MIL/seed_42_2026-08-13-13-08
   - name: RRT_MIL
     config: configs/Diagnosis/MIL/RRT_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/RRT_MIL/seed_42_2026-08-02-23-21
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/RRT_MIL/seed_42_2026-08-13-09-56
   - name: DS_MIL
     config: configs/Diagnosis/MIL/DS_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/DS_MIL/seed_42_2026-08-02-23-20
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/DS_MIL/seed_42_2026-08-13-09-46
   - name: DTFD_MIL
     config: configs/Diagnosis/MIL/DTFD_MIL.yaml
-    run_dir: result/Diagnosis/MIL/HOptimus1_10x_Reinhard/DTFD_MIL/seed_42_2026-08-02-23-21
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/DTFD_MIL/seed_42_2026-08-12-23-24

@@ -38,6 +38,7 @@ from scripts.Diagnosis.spe.run import (
     recover_cached_oof_state_variances,
     resolve_cohort_name,
     selected_checkpoints,
+    selected_checkpoints_with_details,
     trajectory_predictions,
 )
 from utils.model_utils import get_model_from_yaml
@@ -356,6 +357,129 @@ class TestSPE(unittest.TestCase):
                 ["Epoch_0002", "Epoch_0004", "Epoch_0006"],
             )
 
+    @staticmethod
+    def _write_checkpoint_trajectory(
+        fold_dir: Path,
+        rows: list[tuple[float, float, int, int, int, int]],
+    ) -> None:
+        records = []
+        for epoch, (bacc, macro_f1, tn, fp, fn, tp) in enumerate(rows, start=1):
+            relative = f"epoch_checkpoints/Epoch_{epoch:04d}.pth"
+            checkpoint = fold_dir / relative
+            checkpoint.parent.mkdir(parents=True, exist_ok=True)
+            checkpoint.touch()
+            records.append(
+                {
+                    "epoch": epoch,
+                    "checkpoint": relative,
+                    "val_metrics": {
+                        "bacc": bacc,
+                        "macro_f1": macro_f1,
+                        "confusion_mat": [[tn, fp], [fn, tp]],
+                    },
+                }
+            )
+        (fold_dir / "checkpoint_manifest.json").write_text(
+            json.dumps({"epochs": records}), encoding="utf-8"
+        )
+
+    def test_high_performance_stable_basin_selects_contiguous_plateau(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fold_dir = Path(directory)
+            self._write_checkpoint_trajectory(
+                fold_dir,
+                [
+                    (0.970, 0.969, 96, 4, 2, 98),
+                    (0.981, 0.980, 97, 3, 1, 99),
+                    (0.980, 0.979, 97, 3, 1, 99),
+                    (0.979, 0.978, 97, 3, 1, 99),
+                    (0.980, 0.979, 97, 3, 1, 99),
+                    (0.981, 0.980, 97, 3, 1, 99),
+                    (0.975, 0.974, 95, 5, 0, 100),
+                ],
+            )
+            selected, details = selected_checkpoints_with_details(
+                fold_dir,
+                {
+                    "strategy": "high_performance_stable_basin",
+                    "metric": "bacc",
+                    "metric_tolerance": 0.005,
+                    "secondary_metric": "macro_f1",
+                    "secondary_metric_tolerance": 0.005,
+                    "min_consecutive": 5,
+                    "metric_range_tolerance": 0.003,
+                    "sensitivity_range_tolerance": 0.01,
+                    "specificity_range_tolerance": 0.01,
+                    "max_checkpoints": 3,
+                },
+            )
+            self.assertEqual(details["selection_tier"], "strict_stable_basin")
+            self.assertFalse(details["fallback_used"])
+            self.assertEqual(details["retained_interval"]["start_epoch"], 2)
+            self.assertEqual(details["retained_interval"]["end_epoch"], 6)
+            self.assertEqual(
+                [path.stem for path in selected],
+                ["Epoch_0002", "Epoch_0004", "Epoch_0006"],
+            )
+
+    def test_stable_basin_relaxes_class_ranges_before_performance_band(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fold_dir = Path(directory)
+            self._write_checkpoint_trajectory(
+                fold_dir,
+                [
+                    (0.981, 0.980, 99, 1, 3, 97),
+                    (0.980, 0.979, 97, 3, 1, 99),
+                    (0.979, 0.978, 99, 1, 3, 97),
+                    (0.980, 0.979, 97, 3, 1, 99),
+                    (0.981, 0.980, 99, 1, 3, 97),
+                ],
+            )
+            _, details = selected_checkpoints_with_details(
+                fold_dir,
+                {
+                    "strategy": "high_performance_stable_basin",
+                    "min_consecutive": 5,
+                    "metric_range_tolerance": 0.003,
+                    "sensitivity_range_tolerance": 0.01,
+                    "specificity_range_tolerance": 0.01,
+                },
+            )
+            self.assertEqual(
+                details["selection_tier"], "class_relaxed_stable_basin"
+            )
+            self.assertTrue(details["fallback_used"])
+
+    def test_stable_basin_falls_back_to_high_performance_band(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fold_dir = Path(directory)
+            self._write_checkpoint_trajectory(
+                fold_dir,
+                [
+                    (0.981, 0.980, 98, 2, 2, 98),
+                    (0.970, 0.969, 98, 2, 2, 98),
+                    (0.980, 0.979, 98, 2, 2, 98),
+                    (0.969, 0.968, 98, 2, 2, 98),
+                    (0.979, 0.978, 98, 2, 2, 98),
+                ],
+            )
+            selected, details = selected_checkpoints_with_details(
+                fold_dir,
+                {
+                    "strategy": "high_performance_stable_basin",
+                    "min_consecutive": 3,
+                    "max_checkpoints": 3,
+                },
+            )
+            self.assertEqual(
+                details["selection_tier"], "high_performance_band_fallback"
+            )
+            self.assertTrue(details["fallback_used"])
+            self.assertEqual(
+                [path.stem for path in selected],
+                ["Epoch_0001", "Epoch_0003", "Epoch_0005"],
+            )
+
     def test_best_state_checkpoint_selection(self):
         with tempfile.TemporaryDirectory() as directory:
             fold_dir = Path(directory)
@@ -539,6 +663,49 @@ class TestSPE(unittest.TestCase):
                 names,
                 state_variances=invalid_variances,
             )
+
+    def test_development_maximin_anchor_prioritizes_worst_fold(self):
+        labels = np.tile([0, 0, 1, 1], 5)
+        folds = np.repeat(np.arange(1, 6), 4)
+        patients = np.asarray([f"p{index}" for index in range(len(labels))])
+        unstable = np.tile([0.10, 0.20, 0.80, 0.90], 5)
+        unstable[:4] = [0.90, 0.20, 0.80, 0.90]
+        stable = np.tile([0.15, 0.25, 0.75, 0.85], 5)
+        probabilities = np.column_stack([unstable, stable])
+        variances = np.column_stack(
+            [np.full(len(labels), 0.0001), np.full(len(labels), 0.01)]
+        )
+        calibrated = select_development_robust_anchor(
+            probabilities,
+            labels,
+            patients,
+            folds,
+            ["unstable", "stable"],
+            state_variances=variances,
+            bacc_noninferiority_margin=0.06,
+            max_sensitivity_drop=None,
+        )
+        maximin = select_development_robust_anchor(
+            probabilities,
+            labels,
+            patients,
+            folds,
+            ["unstable", "stable"],
+            state_variances=variances,
+            bacc_noninferiority_margin=0.06,
+            max_sensitivity_drop=None,
+            selection_strategy="bacc_equivalent_maximin_stable",
+        )
+        self.assertEqual(maximin.selected_name, "stable")
+        self.assertGreaterEqual(
+            maximin.worst_fold_balanced_accuracies[1],
+            maximin.worst_fold_balanced_accuracies[0],
+        )
+        self.assertEqual(maximin.selection_order[2], "worst_fold_bacc")
+        self.assertEqual(
+            maximin.as_dict()["strategy"],
+            "bacc_equivalent_maximin_stable",
+        )
 
     def test_paper_stable_interval_and_even_spacing(self):
         values = [0.70, 0.701, 0.702, 0.701, 0.703, 0.720, 0.721, 0.722, 0.721, 0.720, 0.719]
