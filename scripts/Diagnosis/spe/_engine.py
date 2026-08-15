@@ -311,6 +311,33 @@ def selected_checkpoints_with_details(
                 f"found {len(checkpoints)}."
             )
         details["selection_tier"] = "best_state"
+    elif strategy == "cp_awa":
+        manifest_path = fold_dir / "cp_awa" / "cp_awa_manifest.json"
+        if not manifest_path.is_file():
+            raise FileNotFoundError(
+                f"Missing CP-AWA artifact: {manifest_path}. Run "
+                "scripts/Diagnosis/spe/build_cp_awa.py first."
+            )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("strategy") != "cp_awa":
+            raise ValueError(f"Invalid CP-AWA manifest strategy in {manifest_path}.")
+        checkpoint = manifest.get("checkpoint")
+        if not checkpoint:
+            raise ValueError(f"CP-AWA manifest has no checkpoint: {manifest_path}")
+        checkpoints = [manifest_path.parent / str(checkpoint)]
+        accepted = manifest.get("accepted_candidates", [])
+        details.update(
+            {
+                "selection_tier": "class_pareto_adaptive_weight_average",
+                "source_manifest": str(manifest_path),
+                "selected_epochs": [
+                    int(record["epoch"]) for record in accepted
+                ],
+                "normalized_weights": manifest.get("normalized_weights", []),
+                "reference_metrics": manifest.get("reference_metrics"),
+                "final_metrics": manifest.get("final_metrics"),
+            }
+        )
     elif strategy in {"high_performance_band", "high_performance_stable_basin"}:
         manifest_path = fold_dir / "checkpoint_manifest.json"
         if not manifest_path.is_file():
@@ -1887,7 +1914,9 @@ def main(cli: argparse.Namespace | None = None) -> None:
                     oof["label"].to_numpy(), architecture_probability, threshold
                 ),
                 "mean_residual_similarity_to_others": float(
-                    np.delete(similarity[index], index).mean()
+                    0.0
+                    if len(names) == 1
+                    else np.delete(similarity[index], index).mean()
                 ),
             }
         )

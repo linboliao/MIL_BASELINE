@@ -1,0 +1,50 @@
+experiment:
+  name: gdf_stability_locked
+  device: cuda:0
+  num_workers: 0
+  preload: false
+  classification_threshold: 0.5
+  development_dataset_root: datasets/Diagnosis/MIL_Mix
+  independent_test_dataset_root: datasets/Diagnosis/MIL
+  output_root: result/Diagnosis/SPE
+
+# GDF is locked after treating the current internal cohort as a stability-
+# selection cohort. External labels must not be used to change this policy.
+# GDF did not contain a five-epoch strict basin in these runs. Its observed
+# robust result comes from averaging validation-selected high-performance
+# states, so lock that exact rule instead of silently relying on a fallback.
+checkpoint_selection:
+  strategy: high_performance_band
+  metric: bacc
+  metric_tolerance: 0.005
+  max_checkpoints: 5
+
+weighting:
+  diversity_lambda: 0.0
+  class_balance: true
+
+aggregation:
+  strategy: top1_anchor_fallback
+  fixed_anchor_name: GDF_MIL
+  anchor_min_weight: 1.0
+  weight_grid_step: 0.01
+  min_oof_bacc_gain: 0.0
+  bacc_noninferiority_margin: 0.0
+  max_oof_sensitivity_drop: 0.0
+  max_oof_specificity_drop: 0.0
+  min_non_decreasing_folds: 5
+  min_non_decreasing_sensitivity_folds: 5
+  fold_tolerance: 0.0
+  fold_sensitivity_tolerance: 0.0
+
+selection:
+  min_members: 1
+  max_members: 1
+  min_cv_improvement: 0.0
+  max_individual_bacc_gap: null
+  max_individual_sensitivity_gap: null
+
+architectures:
+  - name: GDF_MIL
+    config: configs/Diagnosis/MIL/GDF_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/GDF_MIL/seed_42_2026-08-13-13-08

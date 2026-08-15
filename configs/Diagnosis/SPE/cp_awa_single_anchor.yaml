@@ -1,0 +1,107 @@
+experiment:
+  name: cp_awa_single_anchor
+  device: cuda:0
+  num_workers: 0
+  preload: false
+  classification_threshold: 0.5
+  development_dataset_root: datasets/Diagnosis/MIL_Mix
+  independent_test_dataset_root: datasets/Diagnosis/MIL
+  output_root: result/Diagnosis/SPE
+
+checkpoint_selection:
+  strategy: cp_awa
+
+# Offline, training-free checkpoint-soup construction. All thresholds use only
+# the corresponding fold validation set.
+cp_awa:
+  metric_tolerance: 0.005
+  macro_f1_tolerance: 0.005
+  candidate_sensitivity_drop_tolerance: 0.010
+  candidate_specificity_drop_tolerance: 0.010
+  temperature: 0.0025
+  class_temperature: 0.020
+  max_candidates_to_evaluate: 10
+  max_checkpoints: 5
+  greedy_bacc_drop_tolerance: 0.001
+  greedy_sensitivity_drop_tolerance: 0.005
+  greedy_specificity_drop_tolerance: 0.005
+  greedy_log_loss_increase_tolerance: 0.005
+
+weighting:
+  diversity_lambda: 0.0
+  class_balance: true
+
+# CP-AWA is evaluated as a checkpoint-construction method. Select one robust
+# architecture on development OOF data and do not add a cross-architecture
+# ensemble, so inference remains five single-soup folds.
+aggregation:
+  strategy: top1_anchor_fallback
+  anchor_selection:
+    strategy: bacc_equivalent_maximin_stable
+    bacc_noninferiority_margin: 0.005
+    max_sensitivity_drop: 0.010
+    calibration_tolerance: 0.001
+    state_variance_tolerance: 1.0e-5
+    use_state_variance: false
+    require_state_variance: false
+  anchor_min_weight: 1.0
+  weight_grid_step: 0.01
+  min_oof_bacc_gain: 0.0
+  bacc_noninferiority_margin: 0.0
+  max_oof_sensitivity_drop: 0.0
+  max_oof_specificity_drop: 0.0
+  min_non_decreasing_folds: 5
+  min_non_decreasing_sensitivity_folds: 5
+  fold_tolerance: 0.0
+  fold_sensitivity_tolerance: 0.0
+
+selection:
+  min_members: 1
+  max_members: 1
+  min_cv_improvement: 0.0
+  max_individual_bacc_gap: null
+  max_individual_sensitivity_gap: null
+
+architectures:
+  - name: AB_MIL
+    config: configs/Diagnosis/MIL/AB_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/AB_MIL/seed_42_2026-08-12-23-27
+  - name: CLAM_SB_MIL
+    config: configs/Diagnosis/MIL/CLAM_SB_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/CLAM_SB_MIL/seed_42_2026-08-13-09-45
+  - name: CLAM_MB_MIL
+    config: configs/Diagnosis/MIL/CLAM_MB_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/CLAM_MB_MIL/seed_42_2026-08-13-09-44
+  - name: TRANS_MIL
+    config: configs/Diagnosis/MIL/TRANS_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/TRANS_MIL/seed_42_2026-08-13-09-56
+  - name: WIKG_MIL
+    config: configs/Diagnosis/MIL/WIKG_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/WIKG_MIL/seed_42_2026-08-13-09-58
+  - name: MAMBA2D_MIL
+    config: configs/Diagnosis/MIL/MAMBA2D_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/MAMBA2D_MIL/seed_42_2026-08-13-09-52
+  - name: AEM_MIL
+    config: configs/Diagnosis/MIL/AEM_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/AEM_MIL/seed_42_2026-08-13-04-31
+  - name: MICO_MIL
+    config: configs/Diagnosis/MIL/MICO_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/MICO_MIL/seed_42_2026-08-12-23-23
+  - name: MSM_MIL
+    config: configs/Diagnosis/MIL/MSM_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/MSM_MIL/seed_42_2026-08-13-08-16
+  - name: TDA_MIL
+    config: configs/Diagnosis/MIL/TDA_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/TDA_MIL/seed_42_2026-08-13-09-56
+  - name: GDF_MIL
+    config: configs/Diagnosis/MIL/GDF_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/GDF_MIL/seed_42_2026-08-13-13-08
+  - name: RRT_MIL
+    config: configs/Diagnosis/MIL/RRT_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/RRT_MIL/seed_42_2026-08-13-09-56
+  - name: DS_MIL
+    config: configs/Diagnosis/MIL/DS_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/DS_MIL/seed_42_2026-08-13-09-46
+  - name: DTFD_MIL
+    config: configs/Diagnosis/MIL/DTFD_MIL.yaml
+    run_dir: result/Diagnosis/MIL_Mix/HOptimus1_10x_Reinhard/DTFD_MIL/seed_42_2026-08-12-23-24
