@@ -1,0 +1,63 @@
+General:
+    MODEL_NAME: AB_MIL
+    seed: 42
+    num_classes: 2
+    num_epochs: 50
+    device: 0
+    num_workers: 4
+    best_model_metric: macro_f1
+    earlystop:
+        use: true
+        patience: 30
+        metric: macro_f1
+    checkpoint:
+        save_mode: best_last
+        spe:
+            metric: macro_f1
+            stability_threshold: 0.003
+            min_consecutive: 5
+            max_checkpoints: 5
+
+Dataset:
+    DATASET_NAME: 5x
+    comparison_group: Mag
+    variant: 5x
+    dataset_csv_path: null
+    dataset_root_dir: datasets/Diagnosis/Mag_Mix/5x
+    balanced_sampler:
+        use: false
+        replacement: true
+
+Logs:
+    log_root_dir: result/Diagnosis/Mag_Mix
+
+Model:
+    in_dim: 1536
+    L: 512
+    D: 128
+    dropout: 0.1
+    act: relu
+    optimizer:
+        which: adam
+        adam_config:
+            lr: 0.0002
+            weight_decay: 0.00001
+        adamw_config:
+            lr: 0.0002
+            weight_decay: 0.00001
+    criterion:
+        loss: ce
+    scheduler:
+        warmup: 2
+        which: step
+        step_config:
+            step_size: 3
+            gamma: 0.9
+        multi_step_config:
+            milestones: [20, 30, 40]
+            gamma: 0.9
+        exponential_config:
+            gamma: 0.9
+        cosine_config:
+            T_max: 10
+            eta_min: 0.0001

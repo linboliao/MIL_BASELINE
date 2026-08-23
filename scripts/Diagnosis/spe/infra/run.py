@@ -18,11 +18,11 @@ from typing import Any
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 if __package__ in {None, ""}:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.Diagnosis.spe import _engine as engine
+from scripts.Diagnosis.spe.infra import _engine as engine
 
 
 @dataclass(frozen=True)

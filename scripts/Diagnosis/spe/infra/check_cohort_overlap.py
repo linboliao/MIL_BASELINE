@@ -10,10 +10,10 @@ from pathlib import Path, PurePosixPath
 import pandas as pd
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.Diagnosis.spe._engine import patient_id_from_slide
+from scripts.Diagnosis.spe.infra._engine import patient_id_from_slide
 
 
 def parse_args() -> argparse.Namespace:

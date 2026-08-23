@@ -5,7 +5,7 @@ experiment:
   preload: false
   classification_threshold: 0.5
   development_dataset_root: datasets/Diagnosis/MIL_Mix
-  independent_test_dataset_root: datasets/Diagnosis/MIL
+  independent_test_dataset_root: datasets/Diagnosis/MIL_Mix
   output_root: result/Diagnosis/SPE
 
 # Use validation trajectories only. Prefer a contiguous high-performance basin:

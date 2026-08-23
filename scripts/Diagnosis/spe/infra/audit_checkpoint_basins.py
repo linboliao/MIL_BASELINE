@@ -12,10 +12,10 @@ import pandas as pd
 import yaml
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.Diagnosis.spe._engine import (  # noqa: E402
+from scripts.Diagnosis.spe.infra._engine import (  # noqa: E402
     _checkpoint_metric,
     selected_checkpoints_with_details,
 )
