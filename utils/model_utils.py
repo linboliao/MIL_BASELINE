@@ -35,10 +35,21 @@ class WarmUpLR(_LRScheduler):
 def get_criterion(criterion):
     # Keep compatibility with the repository's existing ``criterion: ce``
     # YAML files while also accepting the newer ``criterion: {loss: ce}``
-    # representation.
+    # representation. An optional ``label_smoothing`` field (only meaningful
+    # for ``ce``) defaults to 0.0, so existing configs are unaffected.
     loss_name = criterion.loss if hasattr(criterion, 'loss') else criterion
+    # NOTE: ``criterion`` is an addict.Dict; attribute access on a missing key
+    # auto-vivifies an empty Dict instead of raising AttributeError, so
+    # getattr(..., default) never falls back to the default. Use dict-style
+    # .get() (which does a real containment check) instead.
+    label_smoothing = 0.0
+    if hasattr(criterion, 'loss'):
+        try:
+            label_smoothing = float(criterion.get('label_smoothing', 0.0))
+        except (TypeError, ValueError):
+            label_smoothing = 0.0
     if loss_name == 'ce':
-        return torch.nn.CrossEntropyLoss()
+        return torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing)
     elif loss_name == 'bce':
         return torch.nn.BCEWithLogitsLoss()
     else:
@@ -154,6 +165,12 @@ def get_model_from_yaml(yaml_args):
     if model_name == 'AB_MIL':
         from modules.AB_MIL.ab_mil import AB_MIL
         mil_model = AB_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim)
+        return mil_model
+    elif model_name == 'CENTERADV_AB_MIL':
+        from modules.CENTERADV_AB_MIL.centeradv_ab_mil import CENTERADV_AB_MIL
+        domain_cfg = yaml_args.Model.domain_adv
+        mil_model = CENTERADV_AB_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim,
+                                      num_domains=domain_cfg.num_domains,domain_hidden=domain_cfg.domain_hidden)
         return mil_model
     elif model_name == 'MIXUP_MIL':
         from modules.MIXUP_MIL.mixup_mil import MIXUP_MIL

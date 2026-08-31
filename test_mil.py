@@ -27,7 +27,7 @@ def test(args):
     elif model_name == 'LONG_MIL':
         test_ds = LONG_MIL_WSI_Dataset(test_dataset_csv,yaml_args.Dataset.h5_csv_path,'test')
     else:
-        test_ds = WSI_Dataset(test_dataset_csv,'test')
+        test_ds = WSI_Dataset(test_dataset_csv,'test',preload=True)
     test_dataloader = DataLoader(test_ds,batch_size=1,shuffle=False)
     model_weight_path = args.model_weight_path
     print(f"Model weight path: {model_weight_path}")

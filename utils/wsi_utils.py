@@ -15,9 +15,10 @@ from threading import Event
 
 
 class WSI_Dataset(torch.utils.data.Dataset):
-    def __init__(self, dataset_info_csv_path, group, preload=True):
+    def __init__(self, dataset_info_csv_path, group, preload=False, mem_map=None):
         assert group in ['train', 'val', 'test'], "group must be in [train, val, test]"
-        mem_map = {'train': 150, 'val': 40, 'test': 40}
+        if mem_map is None:
+            mem_map = {'train': 150, 'val': 40, 'test': 40}
         self.max_memory = (mem_map[group]) * (1024 ** 3)
 
         df = pd.read_csv(dataset_info_csv_path)
@@ -125,6 +126,29 @@ class WSI_Dataset(torch.utils.data.Dataset):
         counts = Counter(self.labels_list)
         weights = [1.0 / counts[label] for label in self.labels_list]
         return WeightedRandomSampler(weights, len(self.labels_list), replacement=replacement)
+
+
+class WSI_Domain_Dataset(WSI_Dataset):
+    """WSI_Dataset variant that also returns a per-slide domain (center)
+    label, for center-adversarial (DANN-style) training. Expects an extra
+    ``{group}_domain`` column (integer-encoded center id) in the dataset csv,
+    populated wherever ``{group}_slide_path``/``{group}_label`` are. Falls
+    back to -1 (unused) when the column is missing, e.g. for a plain test
+    csv that was never annotated with center ids."""
+
+    def __init__(self, dataset_info_csv_path, group, preload=False):
+        super().__init__(dataset_info_csv_path, group, preload=preload)
+        df = pd.read_csv(dataset_info_csv_path)
+        domain_col = group + '_domain'
+        if domain_col in df.columns:
+            self.domain_list = df[domain_col].dropna().astype(int).tolist()
+        else:
+            self.domain_list = [-1] * len(self.slide_path_list)
+
+    def __getitem__(self, idx):
+        feat, label, slide_id = super().__getitem__(idx)
+        domain = torch.tensor(int(self.domain_list[idx]))
+        return feat, label, slide_id, domain
 
 
 class CDP_MIL_WSI_Dataset(WSI_Dataset):
