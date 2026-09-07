@@ -1,0 +1,44 @@
+{
+  "total_slide_files": 539,
+  "excluded_slide_files": 9,
+  "usable_slide_files": 530,
+  "by_set": {
+    "20case_panel": 113,
+    "6center_panel": 417
+  },
+  "slides_per_center_6panel": {
+    "301": 60,
+    "900": 60,
+    "云南省肿瘤": 79,
+    "南京军区总院": 79,
+    "广西瑞康": 79,
+    "河南安阳": 60
+  },
+  "section_index_per_center": {
+    "广西瑞康": 2,
+    "南京军区总院": 3,
+    "301": 5,
+    "云南省肿瘤": 6,
+    "900": 7,
+    "河南安阳": 9
+  },
+  "section_filename_mismatches": 0,
+  "unique_cases_6panel": 79,
+  "cases_in_all_6_centers_with_label": 60,
+  "unique_cases_20panel": 19,
+  "cases_with_label": 86,
+  "cases_with_label_conflict": 0,
+  "cases_in_main_cohort": 57,
+  "label_disagreements_vs_main": 0,
+  "excluded_cases": {
+    "124714.1": "out-of-focus scans at 4 centres (图片拼接质量问题)"
+  },
+  "patients_to_exclude_from_training": 55,
+  "slides_to_exclude_from_training": 139,
+  "label_balance": {
+    "0": 45,
+    "1": 41
+  },
+  "prior_prediction_rows": 1058,
+  "per_section_pathologist_reads_available": false
+}

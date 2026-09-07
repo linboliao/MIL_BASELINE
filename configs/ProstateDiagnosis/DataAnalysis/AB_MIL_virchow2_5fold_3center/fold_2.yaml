@@ -1,0 +1,54 @@
+General:
+  MODEL_NAME: AB_MIL
+  seed: 42
+  num_classes: 2
+  num_epochs: 50
+  device: 0
+  num_workers: 2
+  best_model_metric: macro_f1
+  earlystop:
+    use: true
+    patience: 15
+    metric: macro_f1
+
+Dataset:
+  DATASET_NAME: ProstateDiagnosis_virchow2_3center_fold2
+  dataset_csv_path: null
+  dataset_root_dir: datasets/ProstateDiagnosis/DataAnalysis/AB_MIL_virchow2_5fold_3center/fold_2
+  balanced_sampler:
+    use: false
+    replacement: true
+
+Logs:
+  log_root_dir: result/ProstateDiagnosis/DataAnalysis/AB_MIL_virchow2_5fold_3center/fold_2
+
+Model:
+  in_dim: 2560
+  L: 512
+  D: 128
+  dropout: 0.1
+  act: relu
+  optimizer:
+    which: adam
+    adam_config:
+      lr: 0.0002
+      weight_decay: 1.0e-05
+    adamw_config:
+      lr: 0.0002
+      weight_decay: 1.0e-05
+  criterion:
+    loss: ce
+  scheduler:
+    warmup: 2
+    which: step
+    step_config:
+      step_size: 3
+      gamma: 0.9
+    multi_step_config:
+      milestones: [20, 30, 40]
+      gamma: 0.9
+    exponential_config:
+      gamma: 0.9
+    cosine_config:
+      T_max: 10
+      eta_min: 0.0001

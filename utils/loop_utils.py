@@ -156,6 +156,32 @@ def centeradv_train_loop(device, model, loader, criterion, domain_criterion, opt
     return train_loss_log, task_loss_log, domain_loss_log, domain_acc, total_time
 
 
+def mixstyle_train_loop(device, model, loader, criterion, optimizer, scheduler):
+    """Train loop for MIXSTYLE_AB_MIL: identical to the plain AB_MIL
+    train_loop except it also forwards each bag's center id so the model can
+    update its running per-center feature statistics and mix against another
+    center's statistics (see modules/MIXSTYLE_AB_MIL)."""
+    start = time.time()
+    model.train()
+    train_loss_log = 0
+    for i, data in enumerate(loader):
+        optimizer.zero_grad()
+        label = data[1].long().to(device)
+        bag = data[0].to(device).float()
+        domain_id = int(data[3].item())
+        train_logits = model(bag, domain_id=domain_id)['logits']
+        train_loss = criterion(train_logits, label)
+        train_loss_log += train_loss.item()
+        train_loss.backward()
+        optimizer.step()
+    if scheduler is not None:
+        scheduler.step()
+    train_loss_log /= len(loader)
+    end = time.time()
+    total_time = end - start
+    return train_loss_log, total_time
+
+
 def val_loop(device, num_classes, model, loader, criterion, retrun_WSI_feature=False, return_WSI_attn=False):
     model.eval()
     val_loss_log = 0

@@ -1,0 +1,48 @@
+{
+  "seed": 42,
+  "main_pool_slides": 2555,
+  "main_pool_patients": 1444,
+  "unmatched_files": 6,
+  "duplicate_slides_dropped": 44,
+  "external_301_slides": 147,
+  "external_301_patients": 147,
+  "external_ynzl_slides": 183,
+  "external_ynzl_patients": 183,
+  "patient_id_collision_main_vs_external": [],
+  "splits": {
+    "dev": {
+      "slides": 2222,
+      "patients": 1227,
+      "label_type_counts": {
+        "1|CNB": 397,
+        "0|CNB": 292,
+        "1|RP": 741,
+        "0|RP": 332,
+        "0|TURP": 401,
+        "1|TURP": 59
+      },
+      "center_counts": {
+        "新昌": 787,
+        "省立": 1152,
+        "迈新": 283
+      }
+    },
+    "internal_test": {
+      "slides": 333,
+      "patients": 217,
+      "label_type_counts": {
+        "0|TURP": 78,
+        "1|RP": 89,
+        "1|TURP": 24,
+        "1|CNB": 71,
+        "0|CNB": 44,
+        "0|RP": 27
+      },
+      "center_counts": {
+        "新昌": 139,
+        "省立": 156,
+        "迈新": 38
+      }
+    }
+  }
+}

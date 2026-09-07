@@ -172,6 +172,13 @@ def get_model_from_yaml(yaml_args):
         mil_model = CENTERADV_AB_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim,
                                       num_domains=domain_cfg.num_domains,domain_hidden=domain_cfg.domain_hidden)
         return mil_model
+    elif model_name == 'MIXSTYLE_AB_MIL':
+        from modules.MIXSTYLE_AB_MIL.mixstyle_ab_mil import MIXSTYLE_AB_MIL
+        mixstyle_cfg = yaml_args.Model.mixstyle
+        mil_model = MIXSTYLE_AB_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim,
+                                     num_domains=mixstyle_cfg.num_domains,mix_prob=mixstyle_cfg.mix_prob,
+                                     mix_alpha=mixstyle_cfg.mix_alpha,momentum=mixstyle_cfg.momentum)
+        return mil_model
     elif model_name == 'MIXUP_MIL':
         from modules.MIXUP_MIL.mixup_mil import MIXUP_MIL
         mil_model = MIXUP_MIL(yaml_args.Model.L,yaml_args.Model.D,yaml_args.General.num_classes,yaml_args.Model.dropout,get_act(yaml_args.Model.act),yaml_args.Model.in_dim)

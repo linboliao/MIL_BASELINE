@@ -1,0 +1,8 @@
+{
+  "seed": 42,
+  "n_splits": 5,
+  "model": "conch",
+  "dev_slides": 1922,
+  "internal_test_slides": 315,
+  "local_cache": "/data5/lbliao_prostate_cache"
+}

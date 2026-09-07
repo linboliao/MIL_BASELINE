@@ -1,0 +1,6 @@
+﻿fold,train_direct,train_patientlevel,val_direct,val_patientlevel,test_direct,test_patientlevel
+1,4,10,1,5,4,10
+2,4,13,1,2,4,10
+3,3,9,2,6,4,10
+4,4,13,1,2,4,10
+5,5,15,0,0,4,10

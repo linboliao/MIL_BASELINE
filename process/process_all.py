@@ -16,6 +16,9 @@ def process(args,yaml_path,options):
     elif args.General.MODEL_NAME == 'CENTERADV_AB_MIL':
         from .CENTERADV_AB_MIL.process_centeradv_ab_mil import process_CENTERADV_AB_MIL
         process_CENTERADV_AB_MIL(args)
+    elif args.General.MODEL_NAME == 'MIXSTYLE_AB_MIL':
+        from .MIXSTYLE_AB_MIL.process_mixstyle_ab_mil import process_MIXSTYLE_AB_MIL
+        process_MIXSTYLE_AB_MIL(args)
     elif args.General.MODEL_NAME == 'GATE_AB_MIL':
         from .GATE_AB_MIL.process_gate_ab_mil import process_GATE_AB_MIL
         process_GATE_AB_MIL(args)

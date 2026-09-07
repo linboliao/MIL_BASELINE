@@ -1,0 +1,52 @@
+{
+  "panel_A_6center": {
+    "cases": 60,
+    "slides": 360,
+    "centers": [
+      "301",
+      "900",
+      "云南省肿瘤",
+      "南京军区总院",
+      "广西瑞康",
+      "河南安阳"
+    ],
+    "label_balance": {
+      "0.0": 30,
+      "1.0": 30
+    },
+    "note": "fully paired; includes 301 and 云南省肿瘤 which are also external test cohorts"
+  },
+  "panel_B_20case_anon": {
+    "cases": 19,
+    "slides": 113,
+    "units": [
+      "U1",
+      "U2",
+      "U3",
+      "U4",
+      "U5",
+      "U6"
+    ],
+    "units_with_known_identity": {
+      "U1": [],
+      "U2": [
+        "广西瑞康"
+      ],
+      "U3": [
+        "南京军区总院"
+      ],
+      "U4": [],
+      "U5": [],
+      "U6": [
+        "云南省肿瘤"
+      ]
+    },
+    "slides_duplicated_in_panelA_tree": 57,
+    "label_balance": {
+      "1.0": 10,
+      "0.0": 9
+    },
+    "note": "treated as six anonymous units; U2/U3/U6 are byte-identical to named centres"
+  },
+  "cases_disjoint_between_panels": true
+}

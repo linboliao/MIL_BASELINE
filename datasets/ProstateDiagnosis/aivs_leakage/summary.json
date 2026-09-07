@@ -1,0 +1,16 @@
+{
+  "confirmed_matches": 19,
+  "correlation_threshold": 0.9,
+  "leaked_slides": 19,
+  "leaked_patients": 10,
+  "slides_removed_at_patient_level": 52,
+  "by_pool": {
+    "dev": 17,
+    "oldtest": 1,
+    "ext_sl": 1
+  },
+  "by_center": {
+    "迈新": 10,
+    "省立": 9
+  }
+}
