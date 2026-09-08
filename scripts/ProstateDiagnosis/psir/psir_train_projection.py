@@ -20,7 +20,7 @@ import torch.nn.functional as F
 
 SER = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis/serial_sections'
 PSIR_DIR = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis/psir'
-FEAT_ROOT = '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis'
+FEAT_ROOT = '/data5/lbliao_prostate_cache'  # local disk mirror, avoids NAS IO
 POOL_DIR = 'SerialPanelA'
 MODEL = 'conch'
 IN_DIM = 512
@@ -53,7 +53,9 @@ def supcon_loss(z, group_ids, temperature=TEMPERATURE):
     sim = z @ z.t() / temperature
     n = z.size(0)
     self_mask = torch.eye(n, dtype=torch.bool, device=z.device)
-    sim = sim.masked_fill(self_mask, float('-inf'))
+    # use a large-but-finite value instead of -inf: -inf * 0 (for masked-out
+    # positions in the pos_mask multiply below) is NaN, not 0, in IEEE float
+    sim = sim.masked_fill(self_mask, -1e4)
 
     group_ids = group_ids.view(-1, 1)
     pos_mask = (group_ids == group_ids.t()) & ~self_mask
@@ -63,7 +65,7 @@ def supcon_loss(z, group_ids, temperature=TEMPERATURE):
     valid = pos_counts > 0
     if valid.sum() == 0:
         return torch.tensor(0.0, device=z.device, requires_grad=True)
-    loss_per_anchor = -(log_prob * pos_mask).sum(dim=1)[valid] / pos_counts[valid]
+    loss_per_anchor = -(log_prob * pos_mask.float()).sum(dim=1)[valid] / pos_counts[valid]
     return loss_per_anchor.mean()
 
 
@@ -120,6 +122,7 @@ def main(fold):
 
         opt.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(proj.parameters(), max_norm=5.0)
         opt.step()
 
         if epoch % 20 == 0 or epoch == 1:

@@ -19,7 +19,8 @@ import torch.nn as nn
 
 DS = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis'
 PSIR_DIR = f'{DS}/psir'
-FEAT_ROOT = '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis'
+SRC_FEAT_ROOT = '/data5/lbliao_prostate_cache'  # read raw conch from local disk mirror
+DST_FEAT_ROOT = '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis'  # write projected features back to NAS (training pipeline expects them there)
 POOL_DIR = {'dev': 'MIL训练数据', 'oldtest': 'MIL测试数据', 'ext_sl': 'MIL外部测试'}
 MODEL_SRC = 'conch'
 MODEL_DST_TMPL = 'conch_psir_fold{fold}'
@@ -70,8 +71,8 @@ def main(fold):
             if d is None:
                 continue
             stem = os.path.splitext(str(row['filename']))[0]
-            src = f'{FEAT_ROOT}/{d}/feat_0_224/pt_files/{MODEL_SRC}/{stem}.pt'
-            dst = f'{FEAT_ROOT}/{d}/feat_0_224/pt_files/{model_dst}/{stem}.pt'
+            src = f'{SRC_FEAT_ROOT}/{d}/feat_0_224/pt_files/{MODEL_SRC}/{stem}.pt'
+            dst = f'{DST_FEAT_ROOT}/{d}/feat_0_224/pt_files/{model_dst}/{stem}.pt'
             if not os.path.exists(src):
                 continue
             r = project_and_save(src, dst, proj, device)
@@ -84,21 +85,21 @@ def main(fold):
     held_slides = slides_df[slides_df['case_id'].isin(held_cases)]
     for _, row in held_slides.iterrows():
         stem = os.path.splitext(str(row['filename']))[0]
-        src = f'{FEAT_ROOT}/SerialPanelA/feat_0_224/pt_files/{MODEL_SRC}/{stem}.pt'
-        dst = f'{FEAT_ROOT}/SerialPanelA/feat_0_224/pt_files/{model_dst}/{stem}.pt'
+        src = f'{SRC_FEAT_ROOT}/SerialPanelA/feat_0_224/pt_files/{MODEL_SRC}/{stem}.pt'
+        dst = f'{DST_FEAT_ROOT}/SerialPanelA/feat_0_224/pt_files/{model_dst}/{stem}.pt'
         if not os.path.exists(src):
             continue
         r = project_and_save(src, dst, proj, device)
         counts['panel_a_held_out' if r == 'done' else 'skipped'] += 1
 
     # --- Panel B: fully independent, always projected regardless of fold ---
-    panel_b_dir = f'{FEAT_ROOT}/SerialPanelB/feat_0_224/pt_files/{MODEL_SRC}'
+    panel_b_dir = f'{SRC_FEAT_ROOT}/SerialPanelB/feat_0_224/pt_files/{MODEL_SRC}'
     if os.path.isdir(panel_b_dir):
         for fname in os.listdir(panel_b_dir):
             if not fname.endswith('.pt'):
                 continue
             src = f'{panel_b_dir}/{fname}'
-            dst = f'{FEAT_ROOT}/SerialPanelB/feat_0_224/pt_files/{model_dst}/{fname}'
+            dst = f'{DST_FEAT_ROOT}/SerialPanelB/feat_0_224/pt_files/{model_dst}/{fname}'
             r = project_and_save(src, dst, proj, device)
             counts['panel_b' if r == 'done' else 'skipped'] += 1
 

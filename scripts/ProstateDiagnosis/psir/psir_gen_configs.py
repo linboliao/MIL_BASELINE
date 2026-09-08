@@ -60,8 +60,10 @@ Model:
 ROOT = '/NAS3/lbliao/Code-138/MIL_BASELINE'  # adjust to your MIL_BASELINE checkout
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--fold', type=int, required=True, choices=[1, 2, 3, 4, 5])
-parser.add_argument('--gpu', type=int, default=0, help='GPU for this single fold\'s classifier training')
+parser.add_argument('--fold', type=int, required=True, choices=[1, 2, 3, 4, 5],
+                     help='which PSIR projection-head fold (i.e. which conch_psir_fold{N} feature set)')
+parser.add_argument('--gpus', type=int, nargs=5, default=[0, 1, 2, 3, 4],
+                     help='one GPU per CV fold (5 values), matching the CONCH baseline convention')
 args = parser.parse_args()
 
 model = f'conch_psir_fold{args.fold}'
@@ -69,8 +71,9 @@ out_dir = f'{ROOT}/configs/ProstateDiagnosis/DataAnalysis/AB_MIL_{model}_5fold_3
 os.makedirs(out_dir, exist_ok=True)
 
 for cv_fold in range(1, 6):
-    content = TEMPLATE.format(fold=cv_fold, gpu=args.gpu, model=model)
+    gpu = args.gpus[cv_fold - 1]
+    content = TEMPLATE.format(fold=cv_fold, gpu=gpu, model=model)
     path = os.path.join(out_dir, f'fold_{cv_fold}.yaml')
     with open(path, 'w') as f:
         f.write(content)
-    print('wrote', path, 'gpu', args.gpu)
+    print('wrote', path, 'gpu', gpu)

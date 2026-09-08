@@ -4,7 +4,7 @@ General:
   num_classes: 2
   num_epochs: 50
   device: 0
-  num_workers: 2
+  num_workers: 4
   best_model_metric: macro_f1
   earlystop:
     use: true
