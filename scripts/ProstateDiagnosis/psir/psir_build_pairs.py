@@ -12,12 +12,16 @@ validation set (handled directly by the eval script later).
 """
 import json
 import os
+from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import GroupKFold
 
-SER = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE/datasets/ProstateDiagnosis/serial_sections'
-OUT_DIR = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE/datasets/ProstateDiagnosis/psir'
+# Repo-relative: scripts/ProstateDiagnosis/psir/<this file> -> parents[3] == repo root.
+# Keeps the script working on any MIL_BASELINE checkout after a git sync.
+_DS = Path(__file__).resolve().parents[3] / 'datasets' / 'ProstateDiagnosis'
+SER = str(_DS / 'serial_sections')
+OUT_DIR = str(_DS / 'psir')
 N_SPLITS = 5
 SEED = 42
 

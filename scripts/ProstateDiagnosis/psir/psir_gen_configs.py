@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 
 TEMPLATE = """General:
   MODEL_NAME: AB_MIL
@@ -57,7 +58,7 @@ Model:
       eta_min: 0.0001
 """
 
-ROOT = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE'  # adjust to your MIL_BASELINE checkout
+ROOT = str(Path(__file__).resolve().parents[3])  # repo root, inferred from this file's location
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--fold', type=int, required=True, choices=[1, 2, 3, 4, 5],

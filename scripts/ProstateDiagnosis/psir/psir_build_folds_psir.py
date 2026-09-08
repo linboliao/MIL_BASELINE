@@ -7,13 +7,17 @@ NAS145. Add caching yourself if your server has a fast local scratch disk.
 import argparse
 import json
 import os
+from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import StratifiedGroupKFold
 
-ROOT = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE'  # adjust to your MIL_BASELINE checkout
+# Repo root inferred from this file's location (scripts/ProstateDiagnosis/psir/..).
+ROOT = str(Path(__file__).resolve().parents[3])
 DS = f'{ROOT}/datasets/ProstateDiagnosis'
-NAS_FEAT_ROOT = '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis'
+# Shared feature root is identical on both servers; override with $PROSTATE_FEAT_ROOT if it moves.
+NAS_FEAT_ROOT = os.environ.get(
+    'PROSTATE_FEAT_ROOT', '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis')
 POOL_DIR = {'dev': 'MIL训练数据', 'oldtest': 'MIL测试数据', 'ext_sl': 'MIL外部测试'}
 SEED = 42
 N_SPLITS = 5

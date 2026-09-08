@@ -12,15 +12,20 @@ Applies to:
 import argparse
 import json
 import os
+from pathlib import Path
 
 import pandas as pd
 import torch
 import torch.nn as nn
 
-DS = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE/datasets/ProstateDiagnosis'
+DS = str(Path(__file__).resolve().parents[3] / 'datasets' / 'ProstateDiagnosis')  # repo-relative
 PSIR_DIR = f'{DS}/psir'
-SRC_FEAT_ROOT = '/data5/lbliao_prostate_cache'  # read raw conch from local disk mirror
-DST_FEAT_ROOT = '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis'  # write projected features back to NAS (training pipeline expects them there)
+# Projected features are written back to the shared NAS root (training pipeline reads them there).
+DST_FEAT_ROOT = os.environ.get(
+    'PROSTATE_FEAT_ROOT', '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis')
+# Raw source features: point $PROSTATE_CACHE_ROOT at a fast local-disk mirror
+# (138: /data5/lbliao_prostate_cache, 195: /data2/lbliao/... ); defaults to reading from NAS.
+SRC_FEAT_ROOT = os.environ.get('PROSTATE_CACHE_ROOT', DST_FEAT_ROOT)
 POOL_DIR = {'dev': 'MIL训练数据', 'oldtest': 'MIL测试数据', 'ext_sl': 'MIL外部测试'}
 MODEL_SRC = 'uni'
 MODEL_DST_TMPL = 'uni_psir_fold{fold}'

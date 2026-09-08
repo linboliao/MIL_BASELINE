@@ -12,15 +12,19 @@ is cheap: no WSI I/O, runs fine on a single small GPU or even CPU.
 import argparse
 import json
 import os
+from pathlib import Path
 
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-SER = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis/serial_sections'
-PSIR_DIR = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis/psir'
-FEAT_ROOT = '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis'
+# Repo-relative paths (scripts/ProstateDiagnosis/psir/.. -> repo root); no per-server editing after sync.
+_DS = Path(__file__).resolve().parents[3] / 'datasets' / 'ProstateDiagnosis'
+SER = str(_DS / 'serial_sections')
+PSIR_DIR = str(_DS / 'psir')
+FEAT_ROOT = os.environ.get(
+    'PROSTATE_FEAT_ROOT', '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis')
 POOL_DIR = 'SerialPanelA'
 MODEL = 'conch'
 IN_DIM = 512
