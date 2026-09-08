@@ -16,8 +16,8 @@ import os
 import pandas as pd
 from sklearn.model_selection import GroupKFold
 
-SER = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis/serial_sections'
-OUT_DIR = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis/psir'
+SER = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE/datasets/ProstateDiagnosis/serial_sections'
+OUT_DIR = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE/datasets/ProstateDiagnosis/psir'
 N_SPLITS = 5
 SEED = 42
 

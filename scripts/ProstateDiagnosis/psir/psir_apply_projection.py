@@ -17,14 +17,14 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-DS = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis'
+DS = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE/datasets/ProstateDiagnosis'
 PSIR_DIR = f'{DS}/psir'
 SRC_FEAT_ROOT = '/data5/lbliao_prostate_cache'  # read raw conch from local disk mirror
 DST_FEAT_ROOT = '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis'  # write projected features back to NAS (training pipeline expects them there)
 POOL_DIR = {'dev': 'MIL训练数据', 'oldtest': 'MIL测试数据', 'ext_sl': 'MIL外部测试'}
-MODEL_SRC = 'conch'
-MODEL_DST_TMPL = 'conch_psir_fold{fold}'
-IN_DIM = 512
+MODEL_SRC = 'uni'
+MODEL_DST_TMPL = 'uni_psir_fold{fold}'
+IN_DIM = 1024
 PROJ_DIM = 256
 
 

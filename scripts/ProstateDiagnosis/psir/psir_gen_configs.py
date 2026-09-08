@@ -57,7 +57,7 @@ Model:
       eta_min: 0.0001
 """
 
-ROOT = '/NAS3/lbliao/Code-138/MIL_BASELINE'  # adjust to your MIL_BASELINE checkout
+ROOT = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE'  # adjust to your MIL_BASELINE checkout
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--fold', type=int, required=True, choices=[1, 2, 3, 4, 5],
@@ -66,7 +66,7 @@ parser.add_argument('--gpus', type=int, nargs=5, default=[0, 1, 2, 3, 4],
                      help='one GPU per CV fold (5 values), matching the CONCH baseline convention')
 args = parser.parse_args()
 
-model = f'conch_psir_fold{args.fold}'
+model = f'uni_psir_fold{args.fold}'
 out_dir = f'{ROOT}/configs/ProstateDiagnosis/DataAnalysis/AB_MIL_{model}_5fold_3center'
 os.makedirs(out_dir, exist_ok=True)
 

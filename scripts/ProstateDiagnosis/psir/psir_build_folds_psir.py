@@ -11,7 +11,7 @@ import os
 import pandas as pd
 from sklearn.model_selection import StratifiedGroupKFold
 
-ROOT = '/NAS3/lbliao/Code-138/MIL_BASELINE'  # adjust to your MIL_BASELINE checkout
+ROOT = '/NAS2/Data1/lbliao/Code-195/MIL_BASELINE'  # adjust to your MIL_BASELINE checkout
 DS = f'{ROOT}/datasets/ProstateDiagnosis'
 NAS_FEAT_ROOT = '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis'
 POOL_DIR = {'dev': 'MIL训练数据', 'oldtest': 'MIL测试数据', 'ext_sl': 'MIL外部测试'}
@@ -20,7 +20,7 @@ N_SPLITS = 5
 
 
 def main(psir_fold):
-    model = f'conch_psir_fold{psir_fold}'
+    model = f'uni_psir_fold{psir_fold}'
     new_folds = f'{DS}/DataAnalysis/AB_MIL_{model}_5fold_3center'
 
     dev_c = pd.read_csv(f'{DS}/dev_clean.csv', dtype={'slide_id': str, 'patient_id': str})

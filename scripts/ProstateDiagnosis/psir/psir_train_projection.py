@@ -20,11 +20,12 @@ import torch.nn.functional as F
 
 SER = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis/serial_sections'
 PSIR_DIR = '/NAS3/lbliao/Code-138/MIL_BASELINE/datasets/ProstateDiagnosis/psir'
-FEAT_ROOT = '/data5/lbliao_prostate_cache'  # local disk mirror, avoids NAS IO
+FEAT_ROOT = '/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis'
 POOL_DIR = 'SerialPanelA'
 MODEL = 'conch'
 IN_DIM = 512
 PROJ_DIM = 256
+N_PATCH_CAP = 1024  # random patches/bag for the contrastive step (mem)
 TEMPERATURE = 0.1
 LR = 1e-3
 EPOCHS = 200
@@ -53,9 +54,7 @@ def supcon_loss(z, group_ids, temperature=TEMPERATURE):
     sim = z @ z.t() / temperature
     n = z.size(0)
     self_mask = torch.eye(n, dtype=torch.bool, device=z.device)
-    # use a large-but-finite value instead of -inf: -inf * 0 (for masked-out
-    # positions in the pos_mask multiply below) is NaN, not 0, in IEEE float
-    sim = sim.masked_fill(self_mask, -1e4)
+    sim = sim.masked_fill(self_mask, -1e4)  # finite: avoid (-inf)*0 NaN below
 
     group_ids = group_ids.view(-1, 1)
     pos_mask = (group_ids == group_ids.t()) & ~self_mask
@@ -65,7 +64,7 @@ def supcon_loss(z, group_ids, temperature=TEMPERATURE):
     valid = pos_counts > 0
     if valid.sum() == 0:
         return torch.tensor(0.0, device=z.device, requires_grad=True)
-    loss_per_anchor = -(log_prob * pos_mask.float()).sum(dim=1)[valid] / pos_counts[valid]
+    loss_per_anchor = -(log_prob * pos_mask).sum(dim=1)[valid] / pos_counts[valid]
     return loss_per_anchor.mean()
 
 
@@ -101,8 +100,12 @@ def main(fold):
     # pre-load all patch features once (small dataset, fits fine)
     bag_features = []
     group_ids = []
+    g = torch.Generator().manual_seed(SEED)
     for _, row in train_slides.iterrows():
         feats = load_bag_features(row['slide_stem']).float()
+        if feats.shape[0] > N_PATCH_CAP:
+            idx = torch.randperm(feats.shape[0], generator=g)[:N_PATCH_CAP]
+            feats = feats[idx].contiguous()
         bag_features.append(feats)
         group_ids.append(case_to_idx[row['case_id']])
     group_ids = torch.tensor(group_ids, dtype=torch.long)
