@@ -17,7 +17,9 @@
 # env:
 #   PSIR_CACHE          (required) local fp16 feature dir (kept)
 #   PSIR_PYTHON         env python                 (default: python)
-#   PSIR_GPU_BASE       first GPU id               (default: 0)   5 CV folds -> BASE..BASE+4
+#   PSIR_GPU_BASE       first GPU id               (default: 0)
+#   PSIR_NGPU          spread 5 CV folds over N GPUs, BASE..BASE+N-1 (default 5;
+#                      set 4 to run alongside a 4-GPU LOCO job — AB_MIL is tiny)
 #   PSIR_VARIANTS       subset of "bare psir shuf" (default: all)
 #   PSIR_LD_LIBRARY_PATH   prepended if set (195 clam)
 #   PSIR_ALLOC_CONF     PYTORCH_CUDA_ALLOC_CONF    (195: expandable_segments:True; 138: unset)
@@ -28,6 +30,7 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 PY=${PSIR_PYTHON:-python}
 RC=scripts/ProstateDiagnosis/psir/psir_recheck.py
 GPU_BASE=${PSIR_GPU_BASE:-0}
+NGPU=${PSIR_NGPU:-5}          # spread the 5 CV folds over this many GPUs (BASE..BASE+NGPU-1)
 VARIANTS=${PSIR_VARIANTS:-"bare psir shuf"}
 LOGD=${PSIR_LOGD:-$HOME/mil_runs/psir_recheck}
 SW=${PSIR_STAGE_WORKERS:-}   # empty -> psir_recheck.py picks min(16, ncpu) processes
@@ -41,9 +44,9 @@ mkdir -p "$LOGD"; cd "$REPO"
 train_cv () {   # $1 = result-dir name (AB_MIL_..._recheck_...)
   local NAME=$1 pids=() cv
   $PY "$RC" configs --model "$MODEL" --variant "$VARIANT" ${FOLD:+--fold $FOLD} || return 1
-  echo ">>> [$NAME] train 5 CV on GPU $GPU_BASE..$((GPU_BASE+4))  $(date '+%H:%M:%S')"
+  echo ">>> [$NAME] train 5 CV over GPU $GPU_BASE..$((GPU_BASE+NGPU-1))  $(date '+%H:%M:%S')"
   for cv in 1 2 3 4 5; do
-    CUDA_VISIBLE_DEVICES=$((GPU_BASE + cv - 1)) nohup $PY train_mil.py \
+    CUDA_VISIBLE_DEVICES=$((GPU_BASE + (cv - 1) % NGPU)) nohup $PY train_mil.py \
       --yaml_path "configs/ProstateDiagnosis/DataAnalysis/$NAME/fold_${cv}.yaml" \
       > "$LOGD/${NAME}_cv${cv}.log" 2>&1 &
     pids+=($!)
