@@ -17,6 +17,7 @@ echo "repo $REPO @ $(git rev-parse --short HEAD)"
 export LOCO_CACHE=${LOCO_CACHE:-/data2/lbliao/loco_cache}
 export LOCO_PYTHON=${LOCO_PYTHON:-/home/lbliao/anaconda3/envs/clam/bin/python}
 export LOCO_LD_LIBRARY_PATH=${LOCO_LD_LIBRARY_PATH:-/home/lbliao/anaconda3/envs/clam/lib}
+export LOCO_ALLOC_CONF=${LOCO_ALLOC_CONF:-expandable_segments:True}   # 195 driver supports it
 export LOCO_GPU_BASE=${LOCO_GPU_BASE:-0}
 export LOCO_LOGD=${LOCO_LOGD:-/home/lbliao/mil_runs/loco}
 # export LOCO_MODES="internal type fivesite"   # default; drop fivesite to go faster

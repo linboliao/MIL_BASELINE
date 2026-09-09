@@ -20,7 +20,8 @@ export LOCO_CACHE=${LOCO_CACHE:-/data14/lbliao/loco_cache}
 export LOCO_PYTHON=${LOCO_PYTHON:-/data12/jing/anaconda3/envs/PrePATH/bin/python}
 export LOCO_GPU_BASE=${LOCO_GPU_BASE:-0}
 export LOCO_LOGD=${LOCO_LOGD:-/home/jing/mil_runs/loco}
-# 138's PrePATH env needs no LD_LIBRARY_PATH override.
+# 138: PrePATH env needs no LD_LIBRARY_PATH override, and its driver (455 / CUDA 11.1)
+# does NOT support PYTORCH_CUDA_ALLOC_CONF=expandable_segments — leave LOCO_ALLOC_CONF unset.
 # export LOCO_MODES="internal type fivesite"   # default
 
 mkdir -p "$LOCO_LOGD"

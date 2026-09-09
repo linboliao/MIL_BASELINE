@@ -37,7 +37,11 @@ STAGE_WORKERS=${LOCO_STAGE_WORKERS:-24}
 export PROSTATE_FEAT_ROOT="${PROSTATE_FEAT_ROOT:-/NAS145/linboliao/Data/迈新生物_特征/ProstateDiagnosis}"
 export LOCO_CACHE
 export PYTHONPATH="$REPO/$P:${PYTHONPATH:-}"
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# expandable_segments needs driver >= 470 (CUDA 11.4+). 138's driver is 455 / CUDA 11.1
+# and crashes on it ("nvmlDeviceGetNvLinkRemoteDeviceType ... INTERNAL ASSERT FAILED").
+# Opt in via $LOCO_ALLOC_CONF (195 sets it); leave unset elsewhere. The model is tiny
+# (AB_MIL L=512) so the allocator hint is cosmetic here anyway.
+[ -n "${LOCO_ALLOC_CONF:-}" ] && export PYTORCH_CUDA_ALLOC_CONF="$LOCO_ALLOC_CONF"
 mkdir -p "$LOGD"
 cd "$REPO"
 
