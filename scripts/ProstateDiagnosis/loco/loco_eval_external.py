@@ -58,12 +58,17 @@ def main(model, in_dim):
             feats[r["stem"]] = torch.load(r["feat"], map_location="cpu", weights_only=True).float()
     ext = ext[ext["stem"].isin(feats)].reset_index(drop=True)
 
+    root = f"{R}/AB_MIL_{model}_loco_internal"
+    new_seed = sorted(glob.glob(f"{root}/AB_MIL/seed_*"), key=os.path.getmtime)
     per_fold = {}
     for k in sorted(cmap):
-        base = f"{R}/AB_MIL_{model}_loco_internal/{k}"
-        seeds = sorted(glob.glob(f"{base}/*/AB_MIL/seed_*"), key=os.path.getmtime)
-        cps = sorted(glob.glob(f"{seeds[-1]}/fold_1/Best_EPOCH_*.pth"),
-                     key=lambda p: int(p.split("_")[-1].split(".")[0]))
+        kn = k.split("_")[1]
+        cps = sorted(glob.glob(f"{new_seed[-1]}/fold_{kn}/Best_EPOCH_*.pth"),
+                     key=lambda p: int(p.split("_")[-1].split(".")[0])) if new_seed else []
+        if not cps:  # old nested layout
+            seeds = sorted(glob.glob(f"{root}/{k}/*/AB_MIL/seed_*"), key=os.path.getmtime)
+            cps = sorted(glob.glob(f"{seeds[-1]}/fold_1/Best_EPOCH_*.pth"),
+                         key=lambda p: int(p.split("_")[-1].split(".")[0]))
         m = AB_MIL(L=512, D=128, num_classes=2, dropout=0.1, act=nn.ReLU(), in_dim=in_dim).to(DEV).eval()
         m.load_state_dict(torch.load(cps[-1], map_location=DEV, weights_only=True))
         probs = {}

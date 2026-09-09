@@ -50,28 +50,32 @@ declare -A DIM=(
   [conch]=512 [uni]=1024 [uni2]=1536 [virchow2]=2560
   [h-optimus-1]=1536 [gigapath]=1536 [gpfm]=1024 [mstar]=1024
 )
-declare -A NF=( [internal]=2 [type]=3 [fivesite]=4 )
-
 MODELS=("$@")
 [ ${#MODELS[@]} -eq 0 ] && { echo "usage: LOCO_CACHE=... $0 <model> [model...]  (known: ${!DIM[*]})"; exit 2; }
 for M in "${MODELS[@]}"; do
   [ -z "${DIM[$M]:-}" ] && { echo "unknown model: $M   (known: ${!DIM[*]})"; exit 2; }
 done
 
+# One yaml per (model,mode). The N folds run in PARALLEL (GPU GPU_BASE..+N-1),
+# each `train_mil.py --only_fold k --run_ts $TS --no_merge` so they land in ONE
+# shared result/.../AB_MIL_<model>_loco_<mode>/AB_MIL/seed_42_<TS>/fold_<k>/ ;
+# a final --merge_only pass writes merge_<N>_fold_metrics.json.
+declare -A NF=( [internal]=2 [type]=3 [fivesite]=4 )
 run_mode () {   # $1=model  $2=mode
-  local M=$1 MODE=$2 nf=${NF[$2]}
-  echo ">>> [$M/$MODE] build + configs  $(date '+%F %H:%M:%S')"
+  local M=$1 MODE=$2 nf=${NF[$2]} f
   $PY $P/loco_build_folds.py --model "$M" --mode "$MODE" || { echo "$M/$MODE BUILD FAIL"; return 1; }
-  $PY $P/loco_gen_configs.py --model "$M" --mode "$MODE" --in_dim "${DIM[$M]}" --nfold "$nf" || return 1
-  echo ">>> [$M/$MODE] training $nf folds on GPU $GPU_BASE..$((GPU_BASE+nf-1))  $(date '+%H:%M:%S')"
-  local pids=() f
+  $PY $P/loco_gen_configs.py --model "$M" --mode "$MODE" --in_dim "${DIM[$M]}" || return 1
+  local TS Y pids=()
+  TS=$(TZ=Asia/Shanghai date +%Y-%m-%d-%H-%M)
+  Y="configs/ProstateDiagnosis/DataAnalysis/AB_MIL_${M}_loco_${MODE}.yaml"
+  echo ">>> [$M/$MODE] $nf folds ‖ on GPU $GPU_BASE..$((GPU_BASE+nf-1))  seed dir $TS  $(date '+%F %H:%M:%S')"
   for f in $(seq 1 "$nf"); do
-    CUDA_VISIBLE_DEVICES=$((GPU_BASE + f - 1)) nohup $PY train_mil.py \
-      --yaml_path "configs/ProstateDiagnosis/DataAnalysis/AB_MIL_${M}_loco_${MODE}/fold_${f}.yaml" \
-      > "$LOGD/${M}_${MODE}_fold${f}.log" 2>&1 &
+    CUDA_VISIBLE_DEVICES=$((GPU_BASE + f - 1)) nohup $PY train_mil.py --yaml_path "$Y" \
+      --only_fold "$f" --run_ts "$TS" --no_merge > "$LOGD/${M}_${MODE}_fold${f}.log" 2>&1 &
     pids+=($!)
   done
   wait "${pids[@]}"
+  $PY train_mil.py --yaml_path "$Y" --run_ts "$TS" --merge_only >/dev/null 2>&1 || true
   $PY $P/loco_collect.py --model "$M" --mode "$MODE" | tee "$LOGD/${M}_${MODE}_summary.txt"
 }
 

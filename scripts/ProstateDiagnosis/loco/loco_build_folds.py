@@ -25,6 +25,9 @@ def main(model, mode):
 
     outroot = f"{DS}/DataAnalysis/AB_MIL_{model}_loco_{mode}"
     os.makedirs(outroot, exist_ok=True)
+    for old in os.listdir(outroot):                       # clear stale fold CSVs
+        if old.endswith("fold.csv"):
+            os.remove(os.path.join(outroot, old))
     cmap = {}
     print(f"[{model} / {mode}]  cohort {len(df)}  {col}: {df[col].value_counts().to_dict()}")
 
@@ -49,12 +52,9 @@ def main(model, mode):
             "test_slide_path": test["feat"].tolist() + [None] * (n - len(test)),
             "test_label": test["label"].tolist() + [None] * (n - len(test)),
         })
-        d = f"{outroot}/fold_{k}"
-        os.makedirs(d, exist_ok=True)
-        for old in os.listdir(d):
-            if old.endswith(".csv"):
-                os.remove(os.path.join(d, old))
-        out.to_csv(f"{d}/prostate_loco_{model}_{k}fold.csv", index=False)
+        # all fold CSVs go in outroot/ (not outroot/fold_k/) so ONE train_mil.py
+        # invocation's built-in k-fold loop consumes them -> one shared seed_/ dir.
+        out.to_csv(f"{outroot}/prostate_loco_{model}_{mode}_{k}fold.csv", index=False)
         cmap[f"fold_{k}"] = {"held_out": v, "test": int(len(test)),
                              "test_pos": int(test["label"].sum()),
                              "train": int(len(tr)), "val": int(len(va))}

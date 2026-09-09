@@ -268,6 +268,9 @@ def cmd_folds(a):
     sgkf = StratifiedGroupKFold(n_splits=N_SPLITS, shuffle=True, random_state=SEED)
     splits = list(sgkf.split(pat, pat["stratum"], groups=pat["patient_id"]))
     tp, tl = it["feat"].tolist(), it["label"].tolist()
+    outroot.mkdir(parents=True, exist_ok=True)
+    for old in outroot.glob("*fold.csv"):
+        old.unlink()
     for k, (tri, vai) in enumerate(splits, 1):
         trp = set(pat.loc[tri, "patient_id"]); vap = set(pat.loc[vai, "patient_id"])
         tr = dev[dev["patient_id"].isin(trp)]; va = dev[dev["patient_id"].isin(vap)]
@@ -278,10 +281,9 @@ def cmd_folds(a):
                             "val_slide_path": pad(va["feat"].tolist()),
                             "val_label": pad(va["label"].tolist()),
                             "test_slide_path": pad(tp), "test_label": pad(tl)})
-        d = outroot / f"fold_{k}"; d.mkdir(parents=True, exist_ok=True)
-        for old in d.glob("*.csv"):
-            old.unlink()
-        out.to_csv(d / f"prostate_{rr(a.model, a.variant, fold)}_{k}fold.csv", index=False)
+        # all CV CSVs in outroot/ (not outroot/fold_k/) -> one train_mil.py k-fold loop
+        outroot.mkdir(parents=True, exist_ok=True)
+        out.to_csv(outroot / f"prostate_{rr(a.model, a.variant, fold)}_{k}fold.csv", index=False)
         print(f"  cv{k}: train {len(tr)} val {len(va)} test {len(tp)}")
 
 
@@ -291,17 +293,17 @@ _TEMPLATE = """General:
   seed: 42
   num_classes: 2
   num_epochs: 50
-  device: 0
+  device: {gpu}
   num_workers: 2
   best_model_metric: macro_f1
   earlystop: {{use: true, patience: 15, metric: macro_f1}}
 Dataset:
-  DATASET_NAME: {name}_cv{cv}
+  DATASET_NAME: {name}
   dataset_csv_path: null
-  dataset_root_dir: datasets/ProstateDiagnosis/DataAnalysis/{name}/fold_{cv}
+  dataset_root_dir: datasets/ProstateDiagnosis/DataAnalysis/{name}
   balanced_sampler: {{use: false, replacement: true}}
 Logs:
-  log_root_dir: result/ProstateDiagnosis/DataAnalysis/{name}/fold_{cv}
+  log_root_dir: result/ProstateDiagnosis/DataAnalysis
 Model:
   in_dim: {in_dim}
   L: 512
@@ -326,11 +328,11 @@ Model:
 def cmd_configs(a):
     name = rr(a.model, a.variant, a.fold)
     in_dim = DIM[a.model] if a.variant == "bare" else PROJ_DIM
-    out = _REPO / "configs" / "ProstateDiagnosis" / "DataAnalysis" / name
+    out = _REPO / "configs" / "ProstateDiagnosis" / "DataAnalysis"
     out.mkdir(parents=True, exist_ok=True)
-    for cv in range(1, N_SPLITS + 1):
-        (out / f"fold_{cv}.yaml").write_text(_TEMPLATE.format(name=name, cv=cv, in_dim=in_dim))
-    print(f"[configs {name}] in_dim {in_dim} -> {out}")
+    p = out / f"{name}.yaml"
+    p.write_text(_TEMPLATE.format(name=name, in_dim=in_dim, gpu=a.gpu))
+    print(f"[configs {name}] in_dim {in_dim} gpu {a.gpu} -> {p}")
 
 
 # ---------------------------------------------------------------- eval
@@ -373,13 +375,16 @@ def _cv_models(name, in_dim):
     from modules.AB_MIL.ab_mil import AB_MIL
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     mods = []
+    new_seed = sorted(glob.glob(str(RESULT / name / "AB_MIL" / "seed_*")), key=os.path.getmtime)
     for cv in range(1, N_SPLITS + 1):
-        seeds = sorted(glob.glob(str(RESULT / name / f"fold_{cv}" / "*" / "AB_MIL" / "seed_*")),
-                       key=os.path.getmtime)
-        if not seeds:
-            continue
-        best = sorted(glob.glob(f"{seeds[-1]}/fold_1/Best_EPOCH_*.pth"),
-                      key=lambda q: int(q.split("_")[-1].split(".")[0]))
+        # new layout: <name>/AB_MIL/seed_*/fold_<cv>/Best_EPOCH_*.pth
+        best = sorted(glob.glob(f"{new_seed[-1]}/fold_{cv}/Best_EPOCH_*.pth"),
+                      key=lambda q: int(q.split("_")[-1].split(".")[0])) if new_seed else []
+        if not best:  # old nested layout
+            seeds = sorted(glob.glob(str(RESULT / name / f"fold_{cv}" / "*" / "AB_MIL" / "seed_*")),
+                           key=os.path.getmtime)
+            best = (sorted(glob.glob(f"{seeds[-1]}/fold_1/Best_EPOCH_*.pth"),
+                           key=lambda q: int(q.split("_")[-1].split(".")[0])) if seeds else [])
         if not best:
             continue
         m = AB_MIL(L=512, D=128, num_classes=2, dropout=0.1, act=nn.ReLU(), in_dim=in_dim).to(dev).eval()
@@ -468,7 +473,7 @@ if __name__ == "__main__":
     s = sub.add_parser("proj"); s.add_argument("--model", required=True); s.add_argument("--fold", type=int, required=True); s.add_argument("--shuffle", action="store_true"); s.set_defaults(fn=cmd_proj)
     s = sub.add_parser("apply"); s.add_argument("--model", required=True); s.add_argument("--fold", type=int, required=True); s.add_argument("--variant", choices=["psir", "shuf"], required=True); s.set_defaults(fn=cmd_apply)
     s = sub.add_parser("folds"); s.add_argument("--model", required=True); s.add_argument("--variant", choices=["bare", "psir", "shuf"], required=True); s.add_argument("--fold", type=int, default=0); s.set_defaults(fn=cmd_folds)
-    s = sub.add_parser("configs"); s.add_argument("--model", required=True); s.add_argument("--variant", choices=["bare", "psir", "shuf"], required=True); s.add_argument("--fold", type=int, default=0); s.set_defaults(fn=cmd_configs)
+    s = sub.add_parser("configs"); s.add_argument("--model", required=True); s.add_argument("--variant", choices=["bare", "psir", "shuf"], required=True); s.add_argument("--fold", type=int, default=0); s.add_argument("--gpu", type=int, default=0); s.set_defaults(fn=cmd_configs)
     s = sub.add_parser("eval"); s.add_argument("--model", required=True); s.add_argument("--variant", choices=["bare", "psir", "shuf"], required=True); s.set_defaults(fn=cmd_eval)
     a = ap.parse_args()
     if a.cmd in ("folds", "configs") and a.variant != "bare" and not a.fold:

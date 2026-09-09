@@ -42,16 +42,18 @@ export PSIR_CACHE
 mkdir -p "$LOGD"; cd "$REPO"
 
 train_cv () {   # $1 = result-dir name (AB_MIL_..._recheck_...)
-  local NAME=$1 pids=() cv
+  local NAME=$1 pids=() cv TS Y
   $PY "$RC" configs --model "$MODEL" --variant "$VARIANT" ${FOLD:+--fold $FOLD} || return 1
-  echo ">>> [$NAME] train 5 CV over GPU $GPU_BASE..$((GPU_BASE+NGPU-1))  $(date '+%H:%M:%S')"
+  TS=$(TZ=Asia/Shanghai date +%Y-%m-%d-%H-%M)
+  Y="configs/ProstateDiagnosis/DataAnalysis/${NAME}.yaml"
+  echo ">>> [$NAME] 5 CV ‖ over GPU $GPU_BASE..$((GPU_BASE+NGPU-1))  seed dir $TS  $(date '+%H:%M:%S')"
   for cv in 1 2 3 4 5; do
-    CUDA_VISIBLE_DEVICES=$((GPU_BASE + (cv - 1) % NGPU)) nohup $PY train_mil.py \
-      --yaml_path "configs/ProstateDiagnosis/DataAnalysis/$NAME/fold_${cv}.yaml" \
-      > "$LOGD/${NAME}_cv${cv}.log" 2>&1 &
+    CUDA_VISIBLE_DEVICES=$((GPU_BASE + (cv - 1) % NGPU)) nohup $PY train_mil.py --yaml_path "$Y" \
+      --only_fold "$cv" --run_ts "$TS" --no_merge > "$LOGD/${NAME}_cv${cv}.log" 2>&1 &
     pids+=($!)
   done
   wait "${pids[@]}"
+  $PY train_mil.py --yaml_path "$Y" --run_ts "$TS" --merge_only >/dev/null 2>&1 || true
 }
 
 for MODEL in "$@"; do

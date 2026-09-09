@@ -1,3 +1,13 @@
+"""Emit ONE yaml per (model, mode). train_mil.py's built-in k-fold loop then
+consumes all N fold CSVs from dataset_root_dir in a single invocation, so the
+results land in ONE shared timestamped dir:
+
+  result/ProstateDiagnosis/DataAnalysis/AB_MIL_<model>_loco_<mode>/AB_MIL/seed_42_<ts>/fold_{1..N}/
+                                                                  + merge_<N>_fold_metrics.json
+
+(DATASET_NAME is the folder name; train_mil.py inserts <DATASET_NAME>/<MODEL_NAME>
+under log_root_dir, so log_root_dir is just .../DataAnalysis.)
+"""
 import argparse
 import os
 from pathlib import Path
@@ -16,15 +26,15 @@ TEMPLATE = """General:
     metric: macro_f1
 
 Dataset:
-  DATASET_NAME: ProstateDiagnosis_{model}_loco_{mode}_fold{fold}
+  DATASET_NAME: AB_MIL_{model}_loco_{mode}
   dataset_csv_path: null
-  dataset_root_dir: datasets/ProstateDiagnosis/DataAnalysis/AB_MIL_{model}_loco_{mode}/fold_{fold}
+  dataset_root_dir: datasets/ProstateDiagnosis/DataAnalysis/AB_MIL_{model}_loco_{mode}
   balanced_sampler:
     use: false
     replacement: true
 
 Logs:
-  log_root_dir: result/ProstateDiagnosis/DataAnalysis/AB_MIL_{model}_loco_{mode}/fold_{fold}
+  log_root_dir: result/ProstateDiagnosis/DataAnalysis
 
 Model:
   in_dim: {in_dim}
@@ -62,14 +72,14 @@ ROOT = str(Path(__file__).resolve().parents[3])  # repo root, inferred from this
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--model", required=True)
-ap.add_argument("--mode", required=True, choices=["internal","fivesite","type"])
+ap.add_argument("--mode", required=True, choices=["internal", "fivesite", "type"])
 ap.add_argument("--in_dim", type=int, required=True)
-ap.add_argument("--nfold", type=int, required=True)
+ap.add_argument("--gpu", type=int, default=0)
+ap.add_argument("--nfold", type=int, default=0, help="ignored (kept for back-compat)")
 a = ap.parse_args()
 
-out = f"{ROOT}/configs/ProstateDiagnosis/DataAnalysis/AB_MIL_{a.model}_loco_{a.mode}"
+out = f"{ROOT}/configs/ProstateDiagnosis/DataAnalysis"
 os.makedirs(out, exist_ok=True)
-for fold in range(1, a.nfold + 1):
-    p = f"{out}/fold_{fold}.yaml"
-    open(p, "w").write(TEMPLATE.format(fold=fold, gpu=0, model=a.model, mode=a.mode, in_dim=a.in_dim))
-    print("wrote", p, "in_dim", a.in_dim)
+p = f"{out}/AB_MIL_{a.model}_loco_{a.mode}.yaml"
+open(p, "w").write(TEMPLATE.format(gpu=a.gpu, model=a.model, mode=a.mode, in_dim=a.in_dim))
+print("wrote", p, "in_dim", a.in_dim, "gpu", a.gpu)

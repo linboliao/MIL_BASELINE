@@ -23,10 +23,16 @@ def main(model, mode):
     print(f"\n===== LOCO {model} / {mode} =====")
     hdr = f"{'held-out':>8} | {'n(pos)':>10} | {'AUC':>6} | {'AUPRC':>6} | {'sens':>6} | {'spec':>6} | {'bACC':>6} | cm"
     print(hdr); print("-" * len(hdr))
+    root = f"{R}/AB_MIL_{model}_loco_{mode}"
+    # new layout: <root>/AB_MIL/seed_*/fold_<k>/Best*.csv  (one shared seed dir)
+    # old layout: <root>/fold_<k>/*/AB_MIL/seed_*/fold_1/Best*.csv
+    seed_dirs = sorted(glob.glob(f"{root}/AB_MIL/seed_*"), key=os.path.getmtime)
     rows = []
     for k in sorted(cmap):
-        base = f"{R}/AB_MIL_{model}_loco_{mode}/{k}"
-        logs = glob.glob(f"{base}/*/AB_MIL/seed_*/fold_1/Best_Log_*.csv")
+        kn = k.split("_")[1]  # "fold_3" -> "3"
+        logs = glob.glob(f"{seed_dirs[-1]}/fold_{kn}/Best*.csv") if seed_dirs else []
+        if not logs:  # fall back to the old nested layout
+            logs = glob.glob(f"{root}/{k}/*/AB_MIL/seed_*/fold_1/Best_Log_*.csv")
         c = cmap[k]
         if not logs:
             print(f"{c['held_out']:>8} | {c['test']}({c['test_pos']}) | (no result)")
