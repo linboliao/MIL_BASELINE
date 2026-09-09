@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-# 8-PFM robustness matrix — SERVER 138 — encoders: gigapath, gpfm, mstar
+# 8-PFM robustness matrix — SERVER 138 — env preset for the PrePATH conda + GPU 0-3.
 #
-#   ssh 138
-#   tmux new -s loco_matrix
-#   bash scripts/ProstateDiagnosis/loco/run_138.sh        # from the repo root
-#       (or: bash /NAS3/lbliao/Code-138/MIL_BASELINE/scripts/ProstateDiagnosis/loco/run_138.sh)
+#   ssh 138 ; tmux new -s loco_matrix
+#   bash scripts/ProstateDiagnosis/loco/run_138.sh               # default: gigapath gpfm mstar
+#   bash scripts/ProstateDiagnosis/loco/run_138.sh gigapath gpfm # or name the encoder(s)
 #
-# ~5-6 h sequential. All 8x RTX 3090 are free; folds use GPU 0-3.
-# Faster (concurrent) alternative in two tmux panes:
-#   LOCO_CACHE=/data14/lbliao/loco_cache_a LOCO_GPU_BASE=0 bash .../loco_run.sh gigapath
-#   LOCO_CACHE=/data14/lbliao/loco_cache_b LOCO_GPU_BASE=4 bash .../loco_run.sh gpfm mstar
+# All 8x RTX 3090 free; folds use GPU LOCO_GPU_BASE..+3 (default 0-3).
+# 138's driver (455 / CUDA 11.1) does NOT support expandable_segments — leave
+# LOCO_ALLOC_CONF unset (this script does).
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
@@ -24,6 +22,8 @@ export LOCO_LOGD=${LOCO_LOGD:-/home/jing/mil_runs/loco}
 # does NOT support PYTORCH_CUDA_ALLOC_CONF=expandable_segments — leave LOCO_ALLOC_CONF unset.
 # export LOCO_MODES="internal type fivesite"   # default
 
+MODELS=("$@"); [ ${#MODELS[@]} -eq 0 ] && MODELS=(gigapath gpfm mstar)
 mkdir -p "$LOCO_LOGD"
-bash "$HERE/loco_run.sh" gigapath gpfm mstar \
+echo "models: ${MODELS[*]}"
+bash "$HERE/loco_run.sh" "${MODELS[@]}" \
   2>&1 | tee "$LOCO_LOGD/RUN_matrix_138_$(date +%Y%m%d_%H%M).log"
