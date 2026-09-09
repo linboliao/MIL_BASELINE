@@ -31,6 +31,7 @@ GPU_BASE=${LOCO_GPU_BASE:-0}
 MODES=${LOCO_MODES:-"internal type fivesite"}
 LOGD=${LOCO_LOGD:-$HOME/mil_runs/loco}
 STAGE_WORKERS=${LOCO_STAGE_WORKERS:-24}
+KEEP_CACHE=${LOCO_KEEP_CACHE:-}   # set to 1 to NOT wipe the fp16 feature cache (so PSIR etc can reuse it)
 : "${LOCO_CACHE:?set LOCO_CACHE to a per-server local-disk scratch dir}"
 
 [ -n "${LOCO_LD_LIBRARY_PATH:-}" ] && export LD_LIBRARY_PATH=$LOCO_LD_LIBRARY_PATH:${LD_LIBRARY_PATH:-}
@@ -78,7 +79,8 @@ for M in "${MODELS[@]}"; do
   echo "############################################################"
   echo "### $M  (in_dim ${DIM[$M]})  $(date '+%F %H:%M:%S')"
   echo "############################################################"
-  rm -rf "$LOCO_CACHE"; mkdir -p "$LOCO_CACHE"
+  [ -z "$KEEP_CACHE" ] && rm -rf "$LOCO_CACHE"
+  mkdir -p "$LOCO_CACHE"
   echo ">>> staging $M (fp16, $STAGE_WORKERS workers)  $(date '+%H:%M:%S')"
   $PY $P/loco_cache.py --model "$M" --workers "$STAGE_WORKERS" || { echo "$M CACHE FAIL"; exit 1; }
 
@@ -90,8 +92,8 @@ for M in "${MODELS[@]}"; do
         | tee "$LOGD/${M}_internal_external.txt"
     fi
   done
-  rm -rf "$LOCO_CACHE"
-  echo ">>> $M DONE, cache wiped  $(date '+%F %H:%M:%S')"
+  if [ -z "$KEEP_CACHE" ]; then rm -rf "$LOCO_CACHE"; echo ">>> $M DONE, cache wiped  $(date '+%F %H:%M:%S')";
+  else echo ">>> $M DONE, cache KEPT at $LOCO_CACHE  $(date '+%F %H:%M:%S')"; fi
   echo
 done
 
