@@ -30,7 +30,7 @@ PY=${LOCO_PYTHON:-python}
 GPU_BASE=${LOCO_GPU_BASE:-0}
 MODES=${LOCO_MODES:-"internal type fivesite"}
 LOGD=${LOCO_LOGD:-$HOME/mil_runs/loco}
-STAGE_WORKERS=${LOCO_STAGE_WORKERS:-24}
+STAGE_WORKERS=${LOCO_STAGE_WORKERS:-}   # empty -> loco_cache.py picks min(16, ncpu) processes
 KEEP_CACHE=${LOCO_KEEP_CACHE:-}   # set to 1 to NOT wipe the fp16 feature cache (so PSIR etc can reuse it)
 : "${LOCO_CACHE:?set LOCO_CACHE to a per-server local-disk scratch dir}"
 
@@ -81,8 +81,8 @@ for M in "${MODELS[@]}"; do
   echo "############################################################"
   [ -z "$KEEP_CACHE" ] && rm -rf "$LOCO_CACHE"
   mkdir -p "$LOCO_CACHE"
-  echo ">>> staging $M (fp16, $STAGE_WORKERS workers)  $(date '+%H:%M:%S')"
-  $PY $P/loco_cache.py --model "$M" --workers "$STAGE_WORKERS" || { echo "$M CACHE FAIL"; exit 1; }
+  echo ">>> staging $M (fp16)  $(date '+%H:%M:%S')"
+  $PY $P/loco_cache.py --model "$M" ${STAGE_WORKERS:+--workers "$STAGE_WORKERS"} || { echo "$M CACHE FAIL"; exit 1; }
 
   for MODE in $MODES; do
     run_mode "$M" "$MODE" || { echo "$M/$MODE FAIL"; continue; }

@@ -1,13 +1,22 @@
-"""Stage all feature .pt for one encoder from NAS to /data2 as fp16.
+"""Stage all feature .pt for one encoder from NAS to $LOCO_CACHE as fp16.
 Covers dev_clean + internal_test_clean + external 301 + external ynzl
-(~2520 slides) so both the internal-LOCO and 5-site-LOCO builders can use it."""
+(~2520 slides) so both the internal-LOCO and 5-site-LOCO builders can use it.
+
+Uses PROCESSES, not threads: torch.load / .half() / torch.save all hold the
+GIL, so a thread pool serializes on one core and neither the NAS nor the NIC
+saturates (you see low throughput on both ends). Processes parallelize the
+deserialize+convert across cores -> typically 3-6x faster.  --workers defaults
+to a modest CPU count; raise it if the box has spare cores + the NAS keeps up.
+"""
 import argparse
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 import torch
 
 from loco_common import NAS, CACHE, pooled_cohort
+
+torch.set_num_threads(1)  # each worker process is single-threaded; avoids oversubscription
 
 
 def one(job):
@@ -17,7 +26,7 @@ def one(job):
     try:
         t = torch.load(src, map_location="cpu", weights_only=True).half()
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        tmp = dst + ".tmp"
+        tmp = f"{dst}.{os.getpid()}.tmp"
         torch.save(t, tmp)
         os.rename(tmp, dst)
         return 1
@@ -31,10 +40,10 @@ def main(model, workers):
     jobs = [(f"{NAS}/{r.feat_dir}/feat_0_224/pt_files/{model}/{r.stem}.pt",
              f"{CACHE}/{r.feat_dir}/feat_0_224/pt_files/{model}/{r.stem}.pt")
             for r in df.itertuples()]
-    print(f"{model}: {len(jobs)} files -> {CACHE}  ({workers} workers)")
+    print(f"{model}: {len(jobs)} files -> {CACHE}  ({workers} processes)")
     d = s = f = 0
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        for i, r in enumerate(ex.map(one, jobs), 1):
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        for i, r in enumerate(ex.map(one, jobs, chunksize=4), 1):
             d += r == 1; s += r == 0; f += r == -1
             if i % 250 == 0:
                 print(f"  {i}/{len(jobs)}  new={d} skip={s} fail={f}")
@@ -46,6 +55,6 @@ def main(model, workers):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
-    ap.add_argument("--workers", type=int, default=24)
+    ap.add_argument("--workers", type=int, default=min(16, (os.cpu_count() or 8)))
     a = ap.parse_args()
     main(a.model, a.workers)
