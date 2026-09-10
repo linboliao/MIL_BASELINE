@@ -30,14 +30,21 @@ def process_AB_MIL(args):
     
     generator = torch.Generator()
     generator.manual_seed(args.General.seed) 
-    set_global_seed(args.General.seed)
+    from utils.repro_utils import deterministic_requested, enable_full_determinism, seed_worker
+    _wif = None
+    if deterministic_requested():
+        enable_full_determinism(args.General.seed)
+        _wif = seed_worker
+    else:
+        set_global_seed(args.General.seed)
+    args.General._best_val_loss = float('inf')
     num_workers = args.General.num_workers
     use_balanced_sampler = args.Dataset.balanced_sampler.use
     if use_balanced_sampler:
         sampler = train_dataset.get_balanced_sampler(replacement = args.Dataset.balanced_sampler.replacement)
-        train_dataloader = DataLoader(train_dataset, batch_size=1, num_workers = num_workers,generator=generator,sampler=sampler)
+        train_dataloader = DataLoader(train_dataset, batch_size=1, num_workers = num_workers,generator=generator,sampler=sampler,worker_init_fn=_wif)
     else:
-        train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers = num_workers,generator=generator)
+        train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True, num_workers = num_workers,generator=generator,worker_init_fn=_wif)
     val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=num_workers)
     test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=num_workers)
     
@@ -99,7 +106,7 @@ def process_AB_MIL(args):
         add_epoch_info_log(epoch_info_log,epoch,train_loss,val_loss,test_loss,val_metrics,test_metrics)
         
         # model selection, it only works when process_pipeline is 'Train_Val_Test' or 'Train_Val'
-        best_val_metric,best_epoch = model_select(REVERSE,args,mil_model.state_dict(),val_metrics,best_model_metric,best_val_metric,epoch,best_epoch)
+        best_val_metric,best_epoch = model_select(REVERSE,args,mil_model.state_dict(),val_metrics,best_model_metric,best_val_metric,epoch,best_epoch,val_loss=val_loss)
 
         '''
         early stop

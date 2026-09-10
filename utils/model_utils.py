@@ -718,7 +718,7 @@ def get_model_from_yaml(yaml_args):
     else:
         raise ValueError(f'Invalid model name: {model_name}')
     
-def model_select(REVERSE,args,mil_model_state_dict,val_metrics,best_model_metric,best_val_metric,epoch,best_epoch):
+def model_select(REVERSE,args,mil_model_state_dict,val_metrics,best_model_metric,best_val_metric,epoch,best_epoch,val_loss=None):
     is_best = False
     if val_metrics == None:
         record_epoch_checkpoint(
@@ -730,16 +730,18 @@ def model_select(REVERSE,args,mil_model_state_dict,val_metrics,best_model_metric
             is_best=False,
         )
         return best_val_metric,best_epoch
-    if REVERSE and val_metrics[best_model_metric] < best_val_metric:
-        best_epoch = epoch+1
-        best_val_metric = val_metrics[best_model_metric]
-        save_best_model(args,mil_model_state_dict,best_epoch)
-        is_best = True
-
-    elif not REVERSE and val_metrics[best_model_metric] > best_val_metric:
-        best_epoch = epoch+1
-        best_val_metric = val_metrics[best_model_metric]
-        save_best_model(args,mil_model_state_dict,best_epoch)
+    primary = val_metrics[best_model_metric]
+    eps = 1e-9 if val_loss is not None else 0.0
+    bvl = args.General.get('_best_val_loss', float('inf'))
+    better = primary < best_val_metric - eps if REVERSE else primary > best_val_metric + eps
+    tie = abs(primary - best_val_metric) <= eps
+    tie_break = tie and val_loss is not None and val_loss < bvl - eps
+    if better or tie_break:
+        best_epoch = epoch + 1
+        best_val_metric = primary
+        if val_loss is not None:
+            args.General._best_val_loss = val_loss
+        save_best_model(args, mil_model_state_dict, best_epoch)
         is_best = True
     record_epoch_checkpoint(
         args,

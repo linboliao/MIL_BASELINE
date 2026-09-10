@@ -74,6 +74,10 @@ def main(arg):
             args.Dataset.now_fold = now_fold
             args.Logs.now_log_dir = os.path.join(fold_total_log_dir,f'fold_{now_fold}')
             os.makedirs(args.Logs.now_log_dir,exist_ok=True)
+            from utils.repro_utils import deterministic_requested, enable_full_determinism, write_run_metadata
+            if deterministic_requested():
+                enable_full_determinism(args.General.seed)
+                write_run_metadata(args.Logs.now_log_dir, args, k_fold_csv_path)
             process(args,yaml_path,arg.options)
             print(f'K-Fold:{now_fold} Done!')
 
