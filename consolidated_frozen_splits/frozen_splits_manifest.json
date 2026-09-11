@@ -1,0 +1,100 @@
+{
+ "modes": {
+  "internal/fold_1": {
+   "held_out": "省立",
+   "split": {
+    "train": {
+     "n": 945,
+     "sha256": "ed161474483341da7aa81b04da37e541dc4806d5733ba9dc10bf56b481ff1fac"
+    },
+    "val": {
+     "n": 157,
+     "sha256": "7ca556f9eea782fdf5b755e7f7f7a0d470acc089dba44520aa3d549c2d743b77"
+    },
+    "test": {
+     "n": 1135,
+     "sha256": "8fa6ec4adb134b537808fc9931f836a8858e43525da75d3577729fbfeb7e0bed"
+    }
+   }
+  },
+  "internal/fold_2": {
+   "held_out": "新昌",
+   "split": {
+    "train": {
+     "n": 1076,
+     "sha256": "ee0c549cb6255ecde63d8dc82016b5074e0308bf168d07bbbcf8fbe5b892df4a"
+    },
+    "val": {
+     "n": 239,
+     "sha256": "08537804c3cb666765772638655f20a9f5b89857b8dc3c57c2a6fcad7dcbba85"
+    },
+    "test": {
+     "n": 922,
+     "sha256": "f5fb5f40698f737a34fb635c215eefbf672d5851bf0401348e24b577f0e948a1"
+    }
+   }
+  },
+  "type/fold_1": {
+   "held_out": "CNB",
+   "split": {
+    "train": {
+     "n": 1277,
+     "sha256": "56b51845be3e94979cc0b7b21b5ff5de7a4cd335188f4819f0cd0ef8bacdd282"
+    },
+    "val": {
+     "n": 169,
+     "sha256": "5727e30240353203286daa8242118c0563ec0d63e47f3f3bfbdaecb37fd8daa4"
+    },
+    "test": {
+     "n": 791,
+     "sha256": "97fc1eff64688dd8e5e872821a24e39e6869f5ef408680e25a4684825d9652a9"
+    }
+   }
+  },
+  "type/fold_2": {
+   "held_out": "RP",
+   "split": {
+    "train": {
+     "n": 1122,
+     "sha256": "10e16b980327329698af51fd6029e86b14178635b2431556790d7ba62c400f1a"
+    },
+    "val": {
+     "n": 188,
+     "sha256": "56c4c7a54d0a0bd6f1edee0ed1dc9804f98d130400d1aa016dbbb2a7d7f946bc"
+    },
+    "test": {
+     "n": 927,
+     "sha256": "70a9f16cb14a85f3cff5882a98a90184079f81272bce242de4e76d1aea2033ac"
+    }
+   }
+  },
+  "type/fold_3": {
+   "held_out": "TURP",
+   "split": {
+    "train": {
+     "n": 1514,
+     "sha256": "7de13af1ce3604231c68760269c3e653d7c3e4821c96bac70dbdc8f7a0fe88ce"
+    },
+    "val": {
+     "n": 204,
+     "sha256": "36d699fee9dcde0401894cebd8e52a244e390320a937d89622aeff13ec0ce094"
+    },
+    "test": {
+     "n": 519,
+     "sha256": "ea8d70fb9f10b7a55db238231eb7bbb444dc362a3189e511336f88f72b86641e"
+    }
+   }
+  }
+ },
+ "models_checked": [
+  "conch",
+  "uni",
+  "uni2",
+  "virchow2",
+  "h-optimus-1",
+  "mstar",
+  "gigapath",
+  "gpfm"
+ ],
+ "note": "stem-level split is identical across all listed models for each mode/fold; feature-path prefix varies by cache location only and is NOT hashed."
+}
