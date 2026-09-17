@@ -7,7 +7,7 @@
 #   folds:  internal#1 留省立 · internal#2 留新昌
 #           type#1 留CNB · type#2 留RP · type#3 留TURP
 #   protocol: Plain AB_MIL, seed 42, StratifiedGroupKFold(7) 1/7 patient val
-#   per PFM: stage fp32 -> 5 folds in parallel on GPU $GPU_BASE..+4 -> wipe
+#   per PFM: stage fp32 -> run at most 2 folds concurrently -> wipe
 #
 #   ssh 138 ; tmux new -s std_bench
 #   REPO=/NAS3/lbliao/Code-138/MIL_BASELINE \
@@ -27,6 +27,7 @@ MODELS=${LOCO_MODELS:-"conch uni uni2 virchow2 h-optimus-1 mstar gigapath gpfm"}
 TAG=${STD_TAG:-std-$(date +%Y%m%d)}
 LOGD=${LOCO_LOGD:-$HOME/mil_runs/std_bench}
 NOCLOBBER=${STD_NOCLOBBER:-1}
+MAX_PARALLEL=${STD_MAX_PARALLEL:-2}
 : "${LOCO_CACHE:?set LOCO_CACHE to a local-disk scratch dir (>=350G free for fp32)}"
 
 export LOCO_RAW=1                                   # fp32 verbatim — no fp16 rounding
@@ -43,7 +44,7 @@ declare -A DIM=( [conch]=512 [uni]=1024 [uni2]=1536 [virchow2]=2560
 declare -A MODEFOLDS=( [internal]="1:省立 2:新昌" [type]="1:CNB 2:RP 3:TURP" )
 
 echo "repo $REPO @ $(git rev-parse --short HEAD)"
-echo "TAG=$TAG  MIL_DETERMINISM=$MIL_DETERMINISM  fp32(raw)  GPU $GPU_BASE..$((GPU_BASE+4))"
+echo "TAG=$TAG  MIL_DETERMINISM=$MIL_DETERMINISM  fp32(raw)  max_parallel=$MAX_PARALLEL"
 echo "models: $MODELS"
 $PY -c "import utils.repro_utils" 2>/dev/null || { echo "!! utils/repro_utils.py missing — apply the patch first"; exit 3; }
 
@@ -57,20 +58,35 @@ for M in $MODELS; do
     $PY "$LOCO/loco_gen_configs.py" --model "$M" --mode "$MODE" --in_dim "${DIM[$M]}" || continue
     Y="configs/ProstateDiagnosis/DataAnalysis/AB_MIL_${M}_loco_${MODE}.yaml"
     SEEDDIR="result/ProstateDiagnosis/DataAnalysis/AB_MIL_${M}_loco_${MODE}/AB_MIL/seed_42_${TAG}"
-    pids=(); i=0
+    pids=(); labels=(); failed=0; slot=0
+    wait_batch() {
+      local j pid label rc
+      for j in "${!pids[@]}"; do
+        pid=${pids[$j]}; label=${labels[$j]}
+        if wait "$pid"; then
+          echo "   OK $label"
+        else
+          rc=$?
+          echo "!! TRAIN FAIL $label (exit=$rc)"
+          failed=1
+        fi
+      done
+      pids=(); labels=(); slot=0
+    }
     for spec in ${MODEFOLDS[$MODE]}; do
       f=${spec%%:*}; ho=${spec##*:}
       if [ "$NOCLOBBER" = 1 ] && compgen -G "$SEEDDIR/fold_${f}/Best_Log_*.csv" >/dev/null; then
         echo "   skip $M/$MODE fold $f ($ho) -- already done in $SEEDDIR/fold_$f"; continue
       fi
-      G=$((GPU_BASE + i)); i=$((i+1))
+      G=$((GPU_BASE + slot)); slot=$((slot+1))
       echo ">>> $M/$MODE fold $f=$ho  GPU $G  -> $SEEDDIR/fold_$f"
       CUDA_VISIBLE_DEVICES=$G nohup $PY train_mil.py --yaml_path "$Y" \
         --only_fold "$f" --run_ts "$TAG" --no_merge \
         > "$LOGD/${M}_${MODE}_f${f}.log" 2>&1 &
-      pids+=($!)
+      pids+=($!); labels+=("$M/$MODE/fold$f=$ho")
+      [ ${#pids[@]} -ge "$MAX_PARALLEL" ] && wait_batch
     done
-    [ ${#pids[@]} -gt 0 ] && wait "${pids[@]}"
+    [ ${#pids[@]} -gt 0 ] && wait_batch
     $PY train_mil.py --yaml_path "$Y" --run_ts "$TAG" --merge_only >/dev/null 2>&1 || true
 
     # standardized per-fold prediction dump (slide + patient level)
@@ -78,6 +94,10 @@ for M in $MODELS; do
       f=${spec%%:*}; ho=${spec##*:}
       FD="$SEEDDIR/fold_$f"
       [ -d "$FD" ] || continue
+      if ! compgen -G "$FD/Best_Log_*.csv" >/dev/null; then
+        echo "   skip prediction: incomplete fold $M/$MODE/$f ($ho)"
+        continue
+      fi
       SP="test val"
       $PY "$HERE/std_predict.py" --repo "$REPO" --fold_dir "$FD" \
         --in_dim "${DIM[$M]}" --model "$M" --mode "$MODE" --held_out "$ho" \

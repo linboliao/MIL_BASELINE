@@ -25,15 +25,17 @@ FOLDS = {"internal": {1: "省立", 2: "新昌"},
 
 
 def from_summary(fd):
+    # Best_Log is the completion marker. A crashed fold can leave a partial
+    # checkpoint and even stale preds; never collect those as standardized data.
+    bl = glob.glob(os.path.join(fd, "Best_Log_*.csv"))
+    if not bl:
+        return None
     p = os.path.join(fd, "preds", "summary_test.json")
     if os.path.exists(p):
         s = json.load(open(p))["slide_level"]
         return dict(bacc=s["bacc"], auc=s["auc"], auprc=s.get("auprc"),
                     acc=s["acc"], macro_f1=s["macro_f1"],
                     sens=s["sens"], spec=s["spec"])
-    bl = glob.glob(os.path.join(fd, "Best_Log_*.csv"))
-    if not bl:
-        return None
     r = list(csv.DictReader(open(bl[0])))[-1]
     cm = list(map(int, re.findall(r"-?\d+", r.get("test_confusion_mat", ""))))
     sens = spec = None
@@ -52,6 +54,9 @@ def ext_summary(model_root, site):
         # any fold dir
     hits = glob.glob(os.path.join(model_root, "AB_MIL", "seed_*",
                                   "fold_*", "preds", f"summary_external_{site}.json"))
+    # Ignore external summaries from crashed/partial folds as well.
+    hits = [h for h in hits
+            if glob.glob(os.path.join(os.path.dirname(os.path.dirname(h)), "Best_Log_*.csv"))]
     if not hits:
         return None
     vals = [json.load(open(h))["slide_level"] for h in hits]

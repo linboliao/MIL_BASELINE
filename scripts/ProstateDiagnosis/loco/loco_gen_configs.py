@@ -18,7 +18,7 @@ TEMPLATE = """General:
   num_classes: 2
   num_epochs: 50
   device: {gpu}
-  num_workers: 4
+  num_workers: {num_workers}
   best_model_metric: macro_f1
   earlystop:
     use: true
@@ -75,11 +75,14 @@ ap.add_argument("--model", required=True)
 ap.add_argument("--mode", required=True, choices=["internal", "fivesite", "type"])
 ap.add_argument("--in_dim", type=int, required=True)
 ap.add_argument("--gpu", type=int, default=0)
+ap.add_argument("--num_workers", type=int, default=int(os.environ.get("LOCO_NUM_WORKERS", "4")),
+                help="DataLoader workers; defaults to $LOCO_NUM_WORKERS or 4")
 ap.add_argument("--nfold", type=int, default=0, help="ignored (kept for back-compat)")
 a = ap.parse_args()
 
 out = f"{ROOT}/configs/ProstateDiagnosis/DataAnalysis"
 os.makedirs(out, exist_ok=True)
 p = f"{out}/AB_MIL_{a.model}_loco_{a.mode}.yaml"
-open(p, "w").write(TEMPLATE.format(gpu=a.gpu, model=a.model, mode=a.mode, in_dim=a.in_dim))
-print("wrote", p, "in_dim", a.in_dim, "gpu", a.gpu)
+open(p, "w").write(TEMPLATE.format(gpu=a.gpu, model=a.model, mode=a.mode,
+                                      in_dim=a.in_dim, num_workers=a.num_workers))
+print("wrote", p, "in_dim", a.in_dim, "gpu", a.gpu, "num_workers", a.num_workers)

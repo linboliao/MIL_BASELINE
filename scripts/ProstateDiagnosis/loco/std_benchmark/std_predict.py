@@ -83,9 +83,16 @@ def fold_csv_for(repo, model, mode):
     return None
 
 
-def read_split_paths(fold_dir, split):
-    """the fold dir holds a copy of prostate_loco_<m>_<mode>_<k>fold.csv"""
-    cand = glob.glob(os.path.join(fold_dir, "prostate_loco_*fold.csv"))
+def read_split_paths(fold_dir, split, split_csv=None):
+    """By default the fold dir holds a copy of prostate_loco_<m>_<mode>_<k>fold.csv
+    (train_mil.py copies whatever csv it trained from). Pass split_csv to read
+    from a different csv instead -- e.g. the ORIGINAL fold csv when the fold
+    was (re)trained from a train/val-only csv with test blanked out, so the
+    test split still needs to come from the real, unblanked csv."""
+    if split_csv:
+        cand = [split_csv]
+    else:
+        cand = glob.glob(os.path.join(fold_dir, "prostate_loco_*fold.csv"))
     if not cand:
         sys.exit(f"no prostate_loco_*fold.csv in {fold_dir}")
     df = pd.read_csv(cand[0])
@@ -119,6 +126,10 @@ def main():
     ap.add_argument("--held_out", required=True)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--splits", nargs="*", default=["test"])
+    ap.add_argument("--split_csv", default=None,
+                    help="read split columns from this csv instead of the one "
+                         "copied into fold_dir (use when the fold trained from "
+                         "a train/val-only csv with test blanked)")
     ap.add_argument("--external", nargs="*", default=[],
                     help="site names (301 云南肿瘤) — infer external cohorts too")
     ap.add_argument("--cache_roots", nargs="*",
@@ -140,7 +151,7 @@ def main():
 
     jobs = []
     for sp in a.splits:
-        jobs.append((sp, read_split_paths(a.fold_dir, sp)))
+        jobs.append((sp, read_split_paths(a.fold_dir, sp, split_csv=a.split_csv)))
     for site in a.external:
         DS = os.path.join(a.repo, "datasets/ProstateDiagnosis")
         fn = "external_test_301.csv" if site == "301" else "external_test_ynzl.csv"
@@ -151,21 +162,49 @@ def main():
         d["label"] = d["label"].astype(int)
         jobs.append((f"external_{site}", d))
 
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    PREFETCH_BATCH = 64  # bound RAM to ~this many slides' features at once --
+                         # a full-split prefetch (previous approach) put ~170GB
+                         # in RAM for a single large-dim (2560d), 927-slide split
+                         # and nearly triggered a host OOM even in isolation
     for split, d in jobs:
+        # I/O (resolve path + torch.load, both blocking) is the bottleneck for
+        # single-pass inference over hundreds of slides -- prefetch in parallel
+        # threads while the (tiny) AB_MIL forward pass stays on the GPU thread,
+        # but only PREFETCH_BATCH records ahead so memory use stays bounded
+        # regardless of split size or feature dimension.
+        recs = list(d.itertuples(index=False))
+
+        def _load(rec):
+            fp = resolve_feat(rec.stem, a.cache_roots)
+            if fp is None:
+                return None
+            return rec, torch.load(fp, map_location="cpu", weights_only=True).float()
+
         rows = []
         with torch.no_grad():
-            for _, r in d.iterrows():
-                fp = resolve_feat(r["stem"], a.cache_roots)
-                if fp is None:
-                    continue
-                feat = torch.load(fp, map_location="cpu", weights_only=True).float()
-                prob = torch.softmax(m(feat.to(dev).unsqueeze(0))["logits"], -1)[0, 1].item()
-                pid = meta.loc[r["stem"], "patient_id"] if r["stem"] in meta.index else ""
-                rows.append(dict(pfm=a.model, seed=a.seed, held_out=a.held_out,
-                                 split=split, patient_id=pid, slide_id=r["stem"],
-                                 label=int(r["label"]), prob_pos=prob,
-                                 pred_label=int(prob >= 0.5), ckpt_epoch=ep,
-                                 val_macro_f1=vf1, val_loss=vloss))
+            for start in range(0, len(recs), PREFETCH_BATCH):
+                batch = recs[start:start + PREFETCH_BATCH]
+                loaded = {}
+                with ThreadPoolExecutor(max_workers=16) as pool:
+                    futs = [pool.submit(_load, rec) for rec in batch]
+                    for fut in as_completed(futs):
+                        res = fut.result()
+                        if res is not None:
+                            rec, feat = res
+                            loaded[rec.stem] = feat
+                for rec in batch:
+                    if rec.stem not in loaded:
+                        continue
+                    feat = loaded[rec.stem]
+                    prob = torch.softmax(m(feat.to(dev).unsqueeze(0))["logits"], -1)[0, 1].item()
+                    pid = meta.loc[rec.stem, "patient_id"] if rec.stem in meta.index else ""
+                    rows.append(dict(pfm=a.model, seed=a.seed, held_out=a.held_out,
+                                     split=split, patient_id=pid, slide_id=rec.stem,
+                                     label=int(rec.label), prob_pos=prob,
+                                     pred_label=int(prob >= 0.5), ckpt_epoch=ep,
+                                     val_macro_f1=vf1, val_loss=vloss))
+                loaded.clear()
         sd = pd.DataFrame(rows)
         sd.to_csv(os.path.join(outd, f"slide_preds_{split}.csv"), index=False)
         pae = (sd.groupby("patient_id")

@@ -32,6 +32,10 @@ for M in $MODELS; do
   $PY "$LOCO/loco_cache.py" --model "$M" || { echo "$M CACHE FAIL"; continue; }
   for k in 1 2; do
     FD="$SEEDDIR/fold_$k"; [ -d "$FD" ] || continue
+    if ! compgen -G "$FD/Best_Log_*.csv" >/dev/null; then
+      echo "skip external prediction: incomplete fold $M/internal/$k"
+      continue
+    fi
     ho=$([ $k = 1 ] && echo 省立 || echo 新昌)
     CUDA_VISIBLE_DEVICES=$G $PY "$HERE/std_predict.py" --repo "$REPO" \
       --fold_dir "$FD" --in_dim "${DIM[$M]}" --model "$M" --mode internal \
