@@ -47,3 +47,6 @@ logs/
 tmp/
 /result/
 /result/
+
+# Local source-script provenance archives
+/legacy_archive/
