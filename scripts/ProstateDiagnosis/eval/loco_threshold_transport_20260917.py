@@ -423,27 +423,59 @@ def main():
                 fd=fold_dir(repo,args.tag,model,mode,fold)
                 if not fd.is_dir(): raise FileNotFoundError(fd)
                 splitcsv=canonical_split(repo,model,mode,fold)
-                ckpt,ep=best_checkpoint(fd)
                 for split in ("val","test"):
                     expected=split_frame(splitcsv,split)
                     validate_group_isolation(meta,expected,mode,held_out,split)
-                    parentp=fd/"preds"/f"slide_preds_{split}.csv"
-                    pred=read_prediction(parentp)
-                    source="parent_preds"
-                    actual_path=parentp
-                    if pred is not None:
-                        validate_prediction(pred,expected,f"parent {model}/{mode}/{fold}/{split}")
-                    else:
+                    pred=None; source=None; actual_path=None
+                    # Standardized prediction dumps normally live under preds/.
+                    # Four Virchow2 folds were later re-inferred with bounded RAM
+                    # preload and preserved at the fold root.  Treat those as
+                    # existing evaluation artifacts, validate them against the
+                    # canonical split, and never require a now-absent checkpoint
+                    # merely to reuse already-produced probabilities.
+                    parent_candidates=[
+                        ("parent_preds", fd/"preds"/f"slide_preds_{split}.csv"),
+                        ("parent_root_preload_preds", fd/f"slide_preds_{split}.csv"),
+                    ]
+                    for candidate_source,candidate_path in parent_candidates:
+                        candidate=read_prediction(candidate_path)
+                        if candidate is None:
+                            continue
+                        validate_prediction(candidate,expected,f"{candidate_source} {model}/{mode}/{fold}/{split}")
+                        pred=candidate; source=candidate_source; actual_path=candidate_path
+                        break
+                    if pred is None:
                         source="supplemental_inference"
                         actual_path=out/"supplemental_preds"/model/mode/f"fold_{fold}"/f"slide_preds_{split}.csv"
                         if not args.infer_missing:
                             raise RuntimeError(f"missing predictions: {model}/{mode}/{fold}/{split}")
                         print(f"[missing] {model} {mode} fold{fold} {held_out} {split} -> infer",flush=True)
                         pred=infer_split(repo,fd,model,held_out,split,expected,meta,feature_root,actual_path,device,args.preload_chunk_gb,args.preload_workers)
+
+                    checkpoint_path=""; checkpoint_epoch=np.nan
+                    if "checkpoint" in pred.columns:
+                        vals=[str(x) for x in pred["checkpoint"].dropna().unique() if str(x)]
+                        if len(vals)==1: checkpoint_path=vals[0]
+                        elif len(vals)>1: raise RuntimeError(f"multiple checkpoint paths in {actual_path}: {vals}")
+                    if "ckpt_epoch" in pred.columns:
+                        eps=pd.to_numeric(pred["ckpt_epoch"],errors="coerce").dropna().astype(int).unique().tolist()
+                        if len(eps)==1: checkpoint_epoch=int(eps[0])
+                        elif len(eps)>1: raise RuntimeError(f"multiple checkpoint epochs in {actual_path}: {eps}")
+                    if not checkpoint_path or pd.isna(checkpoint_epoch):
+                        try:
+                            ckpt,ep=best_checkpoint(fd)
+                            if not checkpoint_path: checkpoint_path=str(ckpt)
+                            if pd.isna(checkpoint_epoch): checkpoint_epoch=int(ep)
+                        except (FileNotFoundError,RuntimeError):
+                            # Existing validated prediction artifacts remain usable
+                            # for this derived analysis even if their historical
+                            # checkpoint binary is no longer present.
+                            pass
                     audit.append({"model":model,"mode":mode,"fold":fold,"held_out":held_out,"split":split,
                                   "expected_n":len(expected),"pred_n":len(pred),"prediction_source":source,
                                   "prediction_path":str(actual_path),"split_csv":str(splitcsv),
-                                  "checkpoint":str(ckpt),"checkpoint_epoch":ep})
+                                  "checkpoint":checkpoint_path,"checkpoint_epoch":checkpoint_epoch,
+                                  "checkpoint_file_available":bool(checkpoint_path and Path(checkpoint_path).is_file())})
                     fold_records.append((model,mode,fold,held_out,split,pred.copy()))
     audit_df=pd.DataFrame(audit)
     safe_csv(out/"prediction_audit.csv",audit_df)
