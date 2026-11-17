@@ -1,0 +1,6 @@
+{
+  "note": "Documentation only; no Python component assumes this layout",
+  "config_example": "/NAS145/linboliao/Experiments/ProstateDiagnosis/PFM_LOCO/conch/SL/configs/model.yaml",
+  "split_example": "/NAS145/linboliao/Experiments/ProstateDiagnosis/PFM_LOCO/conch/SL/splits",
+  "output_parent_example": "/NAS145/linboliao/Experiments/ProstateDiagnosis/provenance/generalization/pfm-loco-prostate-reproduction"
+}

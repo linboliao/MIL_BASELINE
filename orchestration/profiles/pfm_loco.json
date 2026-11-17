@@ -1,7 +1,0 @@
-{
-  "name": "pfm-loco-patient-group-rebuild",
-  "source": "/NAS145/linboliao/Experiments/ProstateDiagnosis/PFM_LOCO",
-  "output_parent": "/NAS145/linboliao/Experiments/ProstateDiagnosis/provenance/generalization/pfm-loco-prostate-reproduction",
-  "pfms": ["conch", "uni", "uni2", "virchow2", "h-optimus-1", "mstar", "gigapath", "gpfm"],
-  "domains": ["SL", "XC", "CNB", "TURP", "RP"]
-}
