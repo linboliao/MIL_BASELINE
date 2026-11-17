@@ -123,7 +123,8 @@ def _delete_best_pth_files(now_log_dir):
     
 def save_best_model(args,model_state_dict,best_epoch):
     save_path = os.path.join(args.Logs.now_log_dir,f'Best_EPOCH_{best_epoch}.pth')
-    _delete_best_pth_files(args.Logs.now_log_dir)
+    if not args.General.get('retain_all_checkpoints', False):
+        _delete_best_pth_files(args.Logs.now_log_dir)
     torch.save(model_state_dict,save_path)
     
 def save_last_model(args,model_state_dict,last_epoch):
