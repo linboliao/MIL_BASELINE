@@ -1,10 +1,11 @@
+from utils.prediction_utils import prediction_path
 """
 Process script for SC_MIL
 SC_MIL requires coords input, similar to LONG_MIL
 """
 import torch
 import numpy as np
-from torch.utils.data import DataLoader
+from utils.data_loading import DataLoader
 from modules.SC_MIL.sc_mil import SC_MIL
 from utils.process_utils import get_process_pipeline, get_act
 from utils.wsi_utils import LONG_MIL_WSI_Dataset, SC_MIL_WSI_Dataset  # SC_MIL dataset with dummy coords support
@@ -128,15 +129,15 @@ def process_SC_MIL(args):
         
         # Validation and test loops
         if process_pipeline == 'Train_Val_Test':
-            val_loss, val_metrics = val_loop_SC_MIL(device, num_classes, mil_model, val_dataloader, criterion)
-            test_loss, test_metrics = val_loop_SC_MIL(device, num_classes, mil_model, test_dataloader, criterion)
+            val_loss, val_metrics = val_loop_SC_MIL(device, num_classes, mil_model, val_dataloader, criterion, prediction_path=prediction_path(args, 'val', epoch+1))
+            test_loss, test_metrics = val_loop_SC_MIL(device, num_classes, mil_model, test_dataloader, criterion, prediction_path=prediction_path(args, 'test', epoch+1))
         elif process_pipeline == 'Train_Val':
-            val_loss, val_metrics = val_loop_SC_MIL(device, num_classes, mil_model, val_dataloader, criterion)
+            val_loss, val_metrics = val_loop_SC_MIL(device, num_classes, mil_model, val_dataloader, criterion, prediction_path=prediction_path(args, 'val', epoch+1))
             test_loss, test_metrics = None, None
         elif process_pipeline == 'Train_Test':
             val_loss, val_metrics, test_loss, test_metrics = None, None, None, None
             if epoch + 1 == args.General.num_epochs:
-                test_loss, test_metrics = val_loop_SC_MIL(device, num_classes, mil_model, test_dataloader, criterion)
+                test_loss, test_metrics = val_loop_SC_MIL(device, num_classes, mil_model, test_dataloader, criterion, prediction_path=prediction_path(args, 'test', epoch+1))
         
         FAIL = '\033[91m'
         ENDC = '\033[0m'
@@ -146,7 +147,7 @@ def process_SC_MIL(args):
         print(f'{FAIL}Test_Metrics:  {ENDC}{test_metrics}\n')
         add_epoch_info_log(epoch_info_log, epoch, train_loss, val_loss, test_loss, val_metrics, test_metrics)
         
-        best_val_metric, best_epoch = model_select(REVERSE, args, mil_model.state_dict(), val_metrics, best_model_metric, best_val_metric, epoch, best_epoch)
+        best_val_metric, best_epoch = model_select(REVERSE, args, mil_model.state_dict(), val_metrics, best_model_metric, best_val_metric, epoch, best_epoch, val_loss=val_loss)
         
         if early_stop(args, epoch_info_log, process_pipeline, epoch, mil_model.state_dict(), best_epoch):
             break
@@ -155,45 +156,11 @@ def process_SC_MIL(args):
             save_last_model(args, mil_model.state_dict(), epoch + 1)
             save_log(args, epoch_info_log, best_epoch, process_pipeline)
 
-def val_loop_SC_MIL(device, num_classes, model, dataloader, criterion):
-    """Validation loop for SC_MIL (handles coords)"""
-    model.eval()
-    val_loss_total = 0.0
-    val_count = 0
-    all_preds = []
-    all_labels = []
-    
-    with torch.no_grad():
-        for data, label in dataloader:
-            data = data.to(device)
-            label = label.to(device)
-            
-            # Extract features and coords
-            coords = data[:, :, -2:]  # (1, N, 2)
-            features = data[:, :, :-2]  # (1, N, D)
-            
-            output = model(features, coords=coords)
-            logits = output['logits']
-            loss = criterion(logits, label)
-            
-            val_loss_total += loss.item()
-            val_count += 1
-            
-            # Format predictions for cal_scores: (batch_size, num_classes)
-            preds = torch.softmax(logits, dim=1)
-            all_preds.append(preds.cpu().numpy())
-            all_labels.append(label.cpu().numpy())
-    
-    val_loss = val_loss_total / val_count if val_count > 0 else 0.0
-    
-    if len(all_preds) > 0:
-        # Concatenate predictions and labels
-        all_preds = np.concatenate(all_preds, axis=0)  # (batch_size, num_classes)
-        all_labels = np.concatenate(all_labels, axis=0)  # (batch_size,)
-        # Use cal_scores from loop_utils (same as standard val_loop)
-        metrics = cal_scores(all_preds, all_labels, num_classes)
-    else:
-        metrics = {}
-    
-    return val_loss, metrics
+
+def val_loop_SC_MIL(device, num_classes, model, dataloader, criterion,
+                    return_predictions=False, prediction_path=None, slide_paths=None):
+    from utils.evaluation_utils import evaluate_mil
+    return evaluate_mil(device, num_classes, model, dataloader, criterion, kind='sc',
+                        return_predictions=return_predictions, prediction_path=prediction_path,
+                        slide_paths=slide_paths)
 

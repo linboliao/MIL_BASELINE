@@ -1,7 +1,8 @@
+from utils.prediction_utils import prediction_path
 import time
 
 import torch
-from torch.utils.data import DataLoader
+from utils.data_loading import DataLoader
 from tqdm import tqdm
 
 from modules.CAR_MIL.car_mil import CAR_MIL, car_mil_loss
@@ -143,21 +144,21 @@ def process_CAR_MIL(args):
         if process_pipeline == 'Train_Val_Test':
             val_loss, val_metrics = val_loop(
                 device, num_classes, mil_model, val_dataloader, criterion
-            )
+            , prediction_path=prediction_path(args, 'val', epoch+1))
             test_loss, test_metrics = val_loop(
                 device, num_classes, mil_model, test_dataloader, criterion
-            )
+            , prediction_path=prediction_path(args, 'test', epoch+1))
         elif process_pipeline == 'Train_Val':
             val_loss, val_metrics = val_loop(
                 device, num_classes, mil_model, val_dataloader, criterion
-            )
+            , prediction_path=prediction_path(args, 'val', epoch+1))
             test_loss, test_metrics = None, None
         elif process_pipeline == 'Train_Test':
             val_loss, val_metrics, test_loss, test_metrics = None, None, None, None
             if epoch + 1 == args.General.num_epochs:
                 test_loss, test_metrics = val_loop(
                     device, num_classes, mil_model, test_dataloader, criterion
-                )
+                , prediction_path=prediction_path(args, 'test', epoch+1))
 
         print(
             f'EPOCH:{epoch + 1}, Train_Loss:{train_loss}, '
@@ -187,6 +188,7 @@ def process_CAR_MIL(args):
             best_val_metric,
             epoch,
             best_epoch,
+            val_loss=val_loss,
         )
         if early_stop(
             args,

@@ -30,7 +30,16 @@ def main(arg):
         k-fold split
         '''
         dataset_root_dir = args.Dataset.dataset_root_dir
-        k_fold_csv_paths = sorted([os.path.join(dataset_root_dir,path) for path in os.listdir(dataset_root_dir)])
+        import re
+        def fold_key(path):
+            match = re.search(r'_(\d+)fold\.csv$', os.path.basename(path))
+            return (int(match.group(1)) if match else float('inf'), os.path.basename(path))
+        k_fold_csv_paths = sorted(
+            [os.path.join(dataset_root_dir, path) for path in os.listdir(dataset_root_dir)
+             if path.lower().endswith('.csv') and os.path.isfile(os.path.join(dataset_root_dir, path))],
+            key=fold_key)
+        if not k_fold_csv_paths:
+            raise FileNotFoundError(f"No fold CSV files in {dataset_root_dir}")
         process_time = get_time()
         for k_idx,k_fold_csv_path in enumerate(k_fold_csv_paths):
             args.Dataset.dataset_csv_path = k_fold_csv_path

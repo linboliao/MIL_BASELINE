@@ -27,13 +27,24 @@ class WarmUpLR(_LRScheduler):
         return [self.init_lr * epoch for epoch in range(1,self.warmup_epochs+1)]
 
 
+
 def get_criterion(criterion):
-    if criterion == 'ce':
-        return torch.nn.CrossEntropyLoss()
-    elif criterion == 'bce':
-        return torch.nn.BCEWithLogitsLoss()
+    if isinstance(criterion, str):
+        loss, smoothing = criterion, 0.
+    elif isinstance(criterion, dict):
+        loss = criterion.get('loss', 'ce')
+        smoothing = float(criterion.get('label_smoothing', 0.))
     else:
-        raise ValueError(f"Unknown criterion: {criterion}. Supported: 'ce', 'bce'")
+        raise ValueError("criterion must be a loss name or a mapping")
+    if not 0 <= smoothing < 1:
+        raise ValueError("label_smoothing must be in [0, 1)")
+    if loss == 'ce':
+        return torch.nn.CrossEntropyLoss(label_smoothing=smoothing)
+    if loss == 'bce':
+        if smoothing:
+            raise ValueError("label_smoothing is only supported with CE")
+        return torch.nn.BCEWithLogitsLoss()
+    raise ValueError(f"Unknown criterion: {loss}")
 
 
 def get_optimizer(args,model):
@@ -879,19 +890,35 @@ def get_model_from_yaml(yaml_args):
     else:
         raise ValueError(f'Invalid model name: {model_name}')
     
-def model_select(REVERSE,args,mil_model_state_dict,val_metrics,best_model_metric,best_val_metric,epoch,best_epoch):
-    if val_metrics == None:
-        return best_val_metric,best_epoch
-    if REVERSE and val_metrics[best_model_metric] < best_val_metric:
-        best_epoch = epoch+1
-        best_val_metric = val_metrics[best_model_metric]
-        save_best_model(args,mil_model_state_dict,best_epoch)
 
-    elif not REVERSE and val_metrics[best_model_metric] > best_val_metric:
-        best_epoch = epoch+1
-        best_val_metric = val_metrics[best_model_metric]
-        save_best_model(args,mil_model_state_dict,best_epoch)
-    return best_val_metric,best_epoch
+def model_select(REVERSE, args, mil_model_state_dict, val_metrics, best_model_metric,
+                 best_val_metric, epoch, best_epoch, val_loss=None):
+    import math
+    if val_metrics is None:
+        return best_val_metric, best_epoch
+    value = val_loss if best_model_metric == 'val_loss' else val_metrics[best_model_metric]
+    if value is None or not math.isfinite(float(value)):
+        raise ValueError(f"Checkpoint selection metric is not finite: {best_model_metric}={value}")
+    policy = args.General.get('checkpoint_tie_break', 'none')
+    if policy not in ('none', 'val_loss'):
+        raise ValueError("checkpoint_tie_break must be none or val_loss")
+    use_loss = policy == 'val_loss'
+    if use_loss and (val_loss is None or not math.isfinite(float(val_loss))):
+        raise ValueError("val_loss tie-breaking requires a finite validation loss")
+    eps = float(args.General.get('checkpoint_tie_epsilon', 1e-9 if use_loss else 0.))
+    if not math.isfinite(eps) or eps < 0:
+        raise ValueError("checkpoint_tie_epsilon must be nonnegative")
+    previous_loss = args.General.get('_best_val_loss', float('inf'))
+    better = value < best_val_metric-eps if REVERSE else value > best_val_metric+eps
+    tie = abs(value-best_val_metric) <= eps
+    first = not args.General.get('_checkpoint_selected', False)
+    if first or better or (tie and use_loss and val_loss < previous_loss-eps):
+        best_epoch, best_val_metric = epoch+1, value
+        args.General['_checkpoint_selected'] = True
+        if val_loss is not None:
+            args.General['_best_val_loss'] = float(val_loss)
+        save_best_model(args, mil_model_state_dict, best_epoch)
+    return best_val_metric, best_epoch
         
 
 def dtfd_model_select():

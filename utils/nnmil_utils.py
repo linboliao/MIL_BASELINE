@@ -1,3 +1,4 @@
+from .prediction_utils import loss_target
 """Data batching, training and evaluation utilities for NN_MIL."""
 
 import math
@@ -102,7 +103,7 @@ def nnmil_train_loop(device, model, loader, criterion, optimizer, scheduler):
         valid_masks = valid_masks.to(device)
         optimizer.zero_grad()
         logits = model(bags, valid_mask=valid_masks)["logits"]
-        loss = criterion(logits, labels)
+        loss = criterion(logits, loss_target(criterion, logits, labels))
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -112,39 +113,34 @@ def nnmil_train_loop(device, model, loader, criterion, optimizer, scheduler):
 
 
 @torch.no_grad()
-def nnmil_val_loop(device, num_classes, model, loader, criterion, return_predictions=False, slide_paths=None):
-    model.eval()
-    total_loss, labels, probabilities, rows = 0.0, [], [], []
-    row_index = 0
-    for bags, target in loader:
-        bags, target = bags.to(device).float(), target.to(device).long()
+
+def nnmil_val_loop(device, num_classes, model, loader, criterion, return_predictions=False,
+                   slide_paths=None, prediction_path=None):
+    from .prediction_utils import PredictionRecorder, loss_target, class_probabilities
+    model.to(device).eval()
+    enabled = return_predictions or prediction_path is not None
+    recorder = PredictionRecorder(loader, enabled, slide_paths)
+    total_loss, labels, probabilities = 0., [], []
+    for batch in loader:
+        bags, target = batch[0].to(device).float(), batch[1].to(device).long()
         mask = torch.ones(bags.shape[:2], device=device, dtype=torch.bool)
         output = model(bags, valid_mask=mask)
-        logits = output["logits"]
-        total_loss += criterion(logits, target).item()
-        batch_probabilities = torch.softmax(logits, dim=-1).cpu()
-        probabilities.extend(batch_probabilities.tolist())
+        logits = output['logits']
+        total_loss += criterion(logits, loss_target(criterion, logits, target)).item()
+        probs = class_probabilities(logits, criterion)
+        probabilities.extend(probs.cpu().tolist())
         labels.extend(target.cpu().tolist())
-        if return_predictions:
-            for batch_index in range(bags.shape[0]):
-                row = {
-                    "slide_path": slide_paths[row_index] if slide_paths is not None else str(row_index),
-                    "label": int(target[batch_index].item()),
-                    "prediction": int(batch_probabilities[batch_index].argmax().item()),
-                    "total_entropy": float(output["total_entropy"][batch_index].item()),
-                    "aleatoric_entropy": float(output["aleatoric_entropy"][batch_index].item()),
-                    "mutual_information": float(output["mutual_information"][batch_index].item()),
-                    "num_subspaces": int(output["chunk_logits"].shape[0]),
-                }
-                for class_index, value in enumerate(batch_probabilities[batch_index].tolist()):
-                    row[f"probability_class_{class_index}"] = value
-                    row[f"probability_variance_class_{class_index}"] = float(
-                        output["probability_variance"][batch_index, class_index].item()
-                    )
-                rows.append(row)
-                row_index += 1
-    metrics = cal_scores(probabilities, labels, num_classes)
-    loss = total_loss / max(1, len(loader))
-    if return_predictions:
-        return loss, metrics, pd.DataFrame(rows)
-    return loss, metrics
+        extras = []
+        if enabled:
+            for j in range(len(target)):
+                row = {k: float(output[k][j]) for k in
+                       ('total_entropy', 'aleatoric_entropy', 'mutual_information')}
+                row['num_subspaces'] = int(output['chunk_logits'].shape[0])
+                row.update({f'probability_variance_class_{k}': float(v) for k,v in enumerate(output['probability_variance'][j])})
+                row.update({f'probability_class_{k}': float(v) for k,v in enumerate(probs[j])})
+                extras.append(row)
+        recorder.add(batch, logits, probs, target, extras)
+    if not labels:
+        raise ValueError("Empty NN_MIL evaluation loader")
+    return recorder.finish(total_loss/len(loader), cal_scores(probabilities, labels, num_classes),
+                           return_predictions, prediction_path)

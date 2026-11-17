@@ -1,5 +1,6 @@
+from utils.prediction_utils import prediction_path
 import torch
-from torch.utils.data import DataLoader
+from utils.data_loading import DataLoader
 from modules.DTFD_MIL.dtfd_mil import Classifier_1fc, Attention, DimReduction, Attention_with_Classifier
 from utils.process_utils import get_process_pipeline,get_act
 from utils.wsi_utils import WSI_Dataset
@@ -95,15 +96,15 @@ def process_DTFD_MIL(args):
         
         train_loss,cost_time = dtfd_train_loop(device,model_list,train_dataloader,criterion,optimizer_list,scheduler_list,num_Group,grad_clipping,distill,total_instance)
         if process_pipeline == 'Train_Val_Test':
-            val_loss,val_metrics = dtfd_val_loop(device,num_classes,model_list,val_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
-            test_loss,test_metrics = dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
+            val_loss,val_metrics = dtfd_val_loop(device,num_classes,model_list,val_dataloader,criterion,num_Group,grad_clipping,distill,total_instance, prediction_path=prediction_path(args, 'val', epoch+1))
+            test_loss,test_metrics = dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,num_Group,grad_clipping,distill,total_instance, prediction_path=prediction_path(args, 'test', epoch+1))
         elif process_pipeline == 'Train_Val':
-            val_loss,val_metrics = dtfd_val_loop(device,num_classes,model_list,val_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
+            val_loss,val_metrics = dtfd_val_loop(device,num_classes,model_list,val_dataloader,criterion,num_Group,grad_clipping,distill,total_instance, prediction_path=prediction_path(args, 'val', epoch+1))
             test_loss,test_metrics = None,None
         elif process_pipeline == 'Train_Test':
             val_loss,val_metrics,test_loss,test_metrics = None,None,None,None
             if epoch+1 == args.General.num_epochs:
-                test_loss,test_metrics = dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,num_Group,grad_clipping,distill,total_instance)
+                test_loss,test_metrics = dtfd_val_loop(device,num_classes,model_list,test_dataloader,criterion,num_Group,grad_clipping,distill,total_instance, prediction_path=prediction_path(args, 'test', epoch+1))
 
 
         FAIL = '\033[91m'
@@ -117,7 +118,7 @@ def process_DTFD_MIL(args):
                       'dimReduction':dimReduction.state_dict(),'attCls':attCls.state_dict()}
         
         # model selection, it only works when process_pipeline is 'Train_Val_Test' or 'Train_Val'
-        best_val_metric,best_epoch = model_select(REVERSE,args,mil_model_state_dict,val_metrics,best_model_metric,best_val_metric,epoch,best_epoch)
+        best_val_metric,best_epoch = model_select(REVERSE,args,mil_model_state_dict,val_metrics,best_model_metric,best_val_metric,epoch,best_epoch, val_loss=val_loss)
 
         '''
         early stop

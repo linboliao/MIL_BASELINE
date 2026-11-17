@@ -1,5 +1,6 @@
+from utils.prediction_utils import prediction_path
 import torch
-from torch.utils.data import DataLoader
+from utils.data_loading import DataLoader
 from modules.GATE_AB_MIL.gate_ab_mil import GATE_AB_MIL
 from utils.process_utils import get_process_pipeline,get_act
 from utils.wsi_utils import WSI_Dataset
@@ -72,15 +73,15 @@ def process_GATE_AB_MIL(args):
             now_scheduler = scheduler
         train_loss,cost_time = train_loop(device,mil_model,train_dataloader,criterion,optimizer,now_scheduler)
         if process_pipeline == 'Train_Val_Test':
-            val_loss,val_metrics = val_loop(device,num_classes,mil_model,val_dataloader,criterion)
-            test_loss,test_metrics = val_loop(device,num_classes,mil_model,test_dataloader,criterion)
+            val_loss,val_metrics = val_loop(device,num_classes,mil_model,val_dataloader,criterion, prediction_path=prediction_path(args, 'val', epoch+1))
+            test_loss,test_metrics = val_loop(device,num_classes,mil_model,test_dataloader,criterion, prediction_path=prediction_path(args, 'test', epoch+1))
         elif process_pipeline == 'Train_Val':
-            val_loss,val_metrics = val_loop(device,num_classes,mil_model,val_dataloader,criterion)
+            val_loss,val_metrics = val_loop(device,num_classes,mil_model,val_dataloader,criterion, prediction_path=prediction_path(args, 'val', epoch+1))
             test_loss,test_metrics = None,None
         elif process_pipeline == 'Train_Test':
             val_loss,val_metrics,test_loss,test_metrics = None,None,None,None
             if epoch+1 == args.General.num_epochs:
-                test_loss,test_metrics = val_loop(device,num_classes,mil_model,test_dataloader,criterion)
+                test_loss,test_metrics = val_loop(device,num_classes,mil_model,test_dataloader,criterion, prediction_path=prediction_path(args, 'test', epoch+1))
 
 
         FAIL = '\033[91m'
@@ -92,7 +93,7 @@ def process_GATE_AB_MIL(args):
         add_epoch_info_log(epoch_info_log,epoch,train_loss,val_loss,test_loss,val_metrics,test_metrics)
         
         # model selection, it only works when process_pipeline is 'Train_Val_Test' or 'Train_Val'
-        best_val_metric,best_epoch = model_select(REVERSE,args,mil_model.state_dict(),val_metrics,best_model_metric,best_val_metric,epoch,best_epoch)
+        best_val_metric,best_epoch = model_select(REVERSE,args,mil_model.state_dict(),val_metrics,best_model_metric,best_val_metric,epoch,best_epoch, val_loss=val_loss)
 
         '''
         early stop

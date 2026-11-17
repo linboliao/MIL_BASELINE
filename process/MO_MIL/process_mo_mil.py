@@ -1,5 +1,6 @@
+from utils.prediction_utils import prediction_path
 import torch
-from torch.utils.data import DataLoader
+from utils.data_loading import DataLoader
 from tqdm import tqdm
 
 from utils.general_utils import add_epoch_info_log, early_stop, init_epoch_info_log, set_global_seed
@@ -59,22 +60,22 @@ def process_MO_MIL(args):
         now_scheduler = warmup_scheduler if epoch + 1 <= warmup_epoch else scheduler
         train_loss, cost_time = train_loop(device, mil_model, train_dataloader, criterion, optimizer, now_scheduler)
         if process_pipeline == 'Train_Val_Test':
-            val_loss, val_metrics = val_loop(device, args.General.num_classes, mil_model, val_dataloader, criterion)
-            test_loss, test_metrics = val_loop(device, args.General.num_classes, mil_model, test_dataloader, criterion)
+            val_loss, val_metrics = val_loop(device, args.General.num_classes, mil_model, val_dataloader, criterion, prediction_path=prediction_path(args, 'val', epoch+1))
+            test_loss, test_metrics = val_loop(device, args.General.num_classes, mil_model, test_dataloader, criterion, prediction_path=prediction_path(args, 'test', epoch+1))
         elif process_pipeline == 'Train_Val':
-            val_loss, val_metrics = val_loop(device, args.General.num_classes, mil_model, val_dataloader, criterion)
+            val_loss, val_metrics = val_loop(device, args.General.num_classes, mil_model, val_dataloader, criterion, prediction_path=prediction_path(args, 'val', epoch+1))
             test_loss, test_metrics = None, None
         else:
             val_loss, val_metrics, test_loss, test_metrics = None, None, None, None
             if epoch + 1 == args.General.num_epochs:
-                test_loss, test_metrics = val_loop(device, args.General.num_classes, mil_model, test_dataloader, criterion)
+                test_loss, test_metrics = val_loop(device, args.General.num_classes, mil_model, test_dataloader, criterion, prediction_path=prediction_path(args, 'test', epoch+1))
 
         print('----------------INFO----------------\n')
         print(f'EPOCH:{epoch+1},  Train_Loss:{train_loss},  Val_Loss:{val_loss},  Test_Loss:{test_loss},  Cost_Time:{cost_time}\n')
         print(f'Val_Metrics:  {val_metrics}\n')
         print(f'Test_Metrics:  {test_metrics}\n')
         add_epoch_info_log(epoch_info_log, epoch, train_loss, val_loss, test_loss, val_metrics, test_metrics)
-        best_val_metric, best_epoch = model_select(reverse, args, mil_model.state_dict(), val_metrics, best_model_metric, best_val_metric, epoch, best_epoch)
+        best_val_metric, best_epoch = model_select(reverse, args, mil_model.state_dict(), val_metrics, best_model_metric, best_val_metric, epoch, best_epoch, val_loss=val_loss)
 
         if early_stop(args, epoch_info_log, process_pipeline, epoch, mil_model.state_dict(), best_epoch):
             break

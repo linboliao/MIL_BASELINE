@@ -1,5 +1,6 @@
+from utils.prediction_utils import prediction_path
 import torch
-from torch.utils.data import DataLoader
+from utils.data_loading import DataLoader
 from modules.REMIX_MIL.remix_mil import REMIX_MIL, remix_data
 from utils.process_utils import get_process_pipeline, get_act
 from utils.wsi_utils import WSI_Dataset
@@ -81,15 +82,15 @@ def process_REMIX_MIL(args):
         train_loss, cost_time = train_loop_with_mixup(device, mil_model, train_dataloader, criterion, optimizer, now_scheduler, mixup_config, remix_data)
         
         if process_pipeline == 'Train_Val_Test':
-            val_loss, val_metrics = val_loop(device, num_classes, mil_model, val_dataloader, criterion)
-            test_loss, test_metrics = val_loop(device, num_classes, mil_model, test_dataloader, criterion)
+            val_loss, val_metrics = val_loop(device, num_classes, mil_model, val_dataloader, criterion, prediction_path=prediction_path(args, 'val', epoch+1))
+            test_loss, test_metrics = val_loop(device, num_classes, mil_model, test_dataloader, criterion, prediction_path=prediction_path(args, 'test', epoch+1))
         elif process_pipeline == 'Train_Val':
-            val_loss, val_metrics = val_loop(device, num_classes, mil_model, val_dataloader, criterion)
+            val_loss, val_metrics = val_loop(device, num_classes, mil_model, val_dataloader, criterion, prediction_path=prediction_path(args, 'val', epoch+1))
             test_loss, test_metrics = None, None
         elif process_pipeline == 'Train_Test':
             val_loss, val_metrics, test_loss, test_metrics = None, None, None, None
             if epoch + 1 == args.General.num_epochs:
-                test_loss, test_metrics = val_loop(device, num_classes, mil_model, test_dataloader, criterion)
+                test_loss, test_metrics = val_loop(device, num_classes, mil_model, test_dataloader, criterion, prediction_path=prediction_path(args, 'test', epoch+1))
         
         FAIL = '\033[91m'
         ENDC = '\033[0m'
@@ -99,7 +100,7 @@ def process_REMIX_MIL(args):
         print(f'{FAIL}Test_Metrics:  {ENDC}{test_metrics}\n')
         add_epoch_info_log(epoch_info_log, epoch, train_loss, val_loss, test_loss, val_metrics, test_metrics)
         
-        best_val_metric, best_epoch = model_select(REVERSE, args, mil_model.state_dict(), val_metrics, best_model_metric, best_val_metric, epoch, best_epoch)
+        best_val_metric, best_epoch = model_select(REVERSE, args, mil_model.state_dict(), val_metrics, best_model_metric, best_val_metric, epoch, best_epoch, val_loss=val_loss)
         
         if early_stop(args, epoch_info_log, process_pipeline, epoch, mil_model.state_dict(), best_epoch):
             break

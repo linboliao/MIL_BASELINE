@@ -1,5 +1,6 @@
+from utils.prediction_utils import prediction_path
 import torch
-from torch.utils.data import DataLoader
+from utils.data_loading import DataLoader
 from tqdm import tqdm
 
 from modules.LIN_MIL.lin_mil import LIN_MIL
@@ -94,6 +95,7 @@ def process_LIN_MIL(args):
                 model,
                 val_loader,
                 criterion,
+                prediction_path=prediction_path(args, 'val', epoch+1),
             )
         if process_pipeline == "Train_Val_Test" or (
             process_pipeline == "Train_Test"
@@ -105,6 +107,7 @@ def process_LIN_MIL(args):
                 model,
                 test_loader,
                 criterion,
+                prediction_path=prediction_path(args, 'test', epoch+1),
             )
 
         print(
@@ -134,6 +137,7 @@ def process_LIN_MIL(args):
             best_value,
             epoch,
             best_epoch,
+            val_loss=val_loss,
         )
         if early_stop(
             args,

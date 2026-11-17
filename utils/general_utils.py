@@ -31,8 +31,12 @@ def get_time():
 
     now = datetime.now(tz)
 
-    return now.strftime("%Y-%m-%d-%H-%M")
+    return now.strftime("%Y-%m-%d-%H-%M-%S-%f")
 def set_global_seed(seed):
+    from .repro_utils import deterministic_requested, enable_full_determinism
+    if deterministic_requested():
+        enable_full_determinism(seed)
+        return
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -112,7 +116,10 @@ def early_stop(args,epoch_info_log,process_pipeline,epoch,mil_model,best_epoch):
     return False
 
 def merge_k_fold_logs(k_fold_log_dir,process_pipeline):
-    fold_dirs = os.listdir(k_fold_log_dir)
+    fold_dirs = sorted(name for name in os.listdir(k_fold_log_dir)
+                       if name.startswith('fold_') and os.path.isdir(os.path.join(k_fold_log_dir, name)))
+    if not fold_dirs:
+        raise ValueError(f"No fold directories found: {k_fold_log_dir}")
     k = len(fold_dirs)
     k_fold_metrics = {'acc':[],'bacc':[],'macro_auc':[],'micro_auc':[],'weighted_auc':[],
                         'macro_f1':[],'micro_f1':[],'weighted_f1':[],
@@ -121,7 +128,10 @@ def merge_k_fold_logs(k_fold_log_dir,process_pipeline):
                         'quadratic_kappa':[],'linear_kappa':[]}
     for fold_dir in fold_dirs:
         fold_log_dir = os.path.join(k_fold_log_dir,fold_dir)
-        best_log_csv_path = glob.glob(fold_log_dir+'/Best*.csv')[0]
+        candidates = glob.glob(fold_log_dir+'/Best*.csv')
+        if len(candidates) != 1:
+            raise ValueError(f"Expected exactly one Best log in {fold_log_dir}, found {len(candidates)}")
+        best_log_csv_path = candidates[0]
         best_log_df = pd.read_csv(best_log_csv_path)
         if process_pipeline == 'Train_Val':
             report_metrics = ['val_acc', 'val_bacc', 'val_macro_auc', 'val_micro_auc', 'val_weighted_auc',
@@ -137,7 +147,7 @@ def merge_k_fold_logs(k_fold_log_dir,process_pipeline):
                               'test_quadratic_kappa', 'test_linear_kappa']
         metrics = best_log_df.loc[0,report_metrics]
         for i,key in enumerate(k_fold_metrics.keys()):
-            k_fold_metrics[key].append(metrics[i])
+            k_fold_metrics[key].append(metrics.iloc[i])
         
     # calculate the mean and std of the metrics
     k_fold_metrics_mean_std = {}
@@ -147,7 +157,7 @@ def merge_k_fold_logs(k_fold_log_dir,process_pipeline):
             'std': np.std(k_fold_metrics[key])
         }
     merge_k_fold_metrics_json_path = os.path.join(k_fold_log_dir,f'merge_{k}_fold_metrics.json')
-    with open(merge_k_fold_metrics_json_path,'w') as f:
+    with open(merge_k_fold_metrics_json_path,'x') as f:
         json.dump(k_fold_metrics_mean_std,f)
             
         

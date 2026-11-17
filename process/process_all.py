@@ -1,6 +1,6 @@
 from utils.general_utils import save_dataset_csv,print_args
 from utils.yaml_utils import save_yaml
-def process(args,yaml_path,options):
+def _process(args,yaml_path,options):
     save_dataset_csv(args)
     save_yaml(args,yaml_path,options)
     print_args(args)
@@ -190,3 +190,19 @@ def process(args,yaml_path,options):
     
 
     
+
+
+def process(args, yaml_path, options):
+    from pathlib import Path
+    from utils.data_loading import dataset_options
+    from utils.repro_utils import write_run_metadata
+    output = Path(args.Logs.now_log_dir)
+    if output.exists() and any(output.iterdir()):
+        raise FileExistsError(f"Run directory must be new and empty: {output}")
+    args.General.pop('_checkpoint_selected', None)
+    args.General.pop('_best_val_loss', None)
+    from utils.general_utils import set_global_seed
+    set_global_seed(args.General.seed)
+    write_run_metadata(output, args, args.Dataset.dataset_csv_path)
+    with dataset_options(args.Dataset):
+        return _process(args, yaml_path, options)
