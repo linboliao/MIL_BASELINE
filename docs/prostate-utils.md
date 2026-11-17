@@ -103,3 +103,23 @@ synthetic artifacts are retained. Tests cover evaluation contracts, all DTFD
 branches, real ABMIL/NN_MIL forwards, identity, budgets, coordinate compatibility,
 non-clobbering outputs and process call-site wiring. This is not validation of
 every architecture on real WSIs or a GPU performance benchmark.
+
+## DTFD grouping and distillation
+
+Training and evaluation share utils/dtfd_utils.py. A WSI is split into exactly
+min(num_Group, patch_count) balanced, nonempty groups. AFS pools one feature per
+group and does not use total_instance.
+
+For MaxS/MaxMinS, total_instance is a positive integer distributed across the
+actual groups (remainders go to the first groups). Budgets smaller than the
+actual group count are rejected. MaxS selects the top quota per group.
+MaxMinS selects both extremes: its maximum count is twice total_instance.
+Selection is capped at the available patches and extremes never duplicate a
+patch. A short group can therefore underspend its budget; it is not padded.
+This fixes zero-quota / -0 slicing and overlapping selections. The example
+DTFD config uses num_Group=5 and total_instance=5.
+
+These boundary rules differ from legacy torch.chunk/floor/overlapping behavior.
+Do not treat predictions for affected bags as bitwise reproduction of old runs.
+Batch size must remain one WSI. Unsupported modes, empty bags and nonintegral
+parameters fail explicitly.

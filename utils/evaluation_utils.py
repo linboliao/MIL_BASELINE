@@ -4,34 +4,9 @@ import torch
 from .prediction_utils import PredictionRecorder, loss_target, class_probabilities
 
 def _dtfd_forward(models, bag, num_group, total_instance, distill, feature=False, attention=False):
-    classifier, attn, reduction, head = models
-    if num_group < 1:
-        raise ValueError("DTFD num_Group must be positive")
-    per_group = total_instance//num_group
-
-
-    if num_group < 1 or per_group < 1:
-        raise ValueError("DTFD num_Group and total_instance must define nonempty groups")
-    pseudo = []
-    for chunk in torch.chunk(bag.squeeze(0), num_group, dim=0):
-        reduced = reduction(chunk)
-        weights = attn(reduced).squeeze(0)
-        weighted = torch.einsum('ns,n->ns', reduced, weights)
-        pooled = weighted.sum(dim=0, keepdim=True)
-        if distill == 'AFS':
-            pseudo.append(pooled)
-            continue
-        weight = list(classifier.parameters())[-2]
-        patch_logits = torch.einsum('bgf,cf->bcg', weighted.unsqueeze(0), weight).squeeze(0).T
-        rank = torch.softmax(patch_logits, dim=1)[:, -1].argsort(descending=True)
-        if distill == 'MaxMinS':
-            idx = torch.cat((rank[:per_group], rank[-per_group:]))
-        elif distill == 'MaxS':
-            idx = rank[:per_group]
-        else:
-            raise ValueError(f"Unknown DTFD distillation: {distill}")
-        pseudo.append(reduced.index_select(0, idx))
-    return head(torch.cat(pseudo, dim=0), return_WSI_feature=feature, return_WSI_attn=attention)
+    from .dtfd_utils import dtfd_distill_features
+    pseudo, _ = dtfd_distill_features(models, bag, num_group, total_instance, distill)
+    return models[3](pseudo, return_WSI_feature=feature, return_WSI_attn=attention)
 
 @torch.no_grad()
 def evaluate_mil(device, num_classes, model, loader, criterion, *, kind='generic',

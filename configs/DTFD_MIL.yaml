@@ -34,7 +34,7 @@ Model:
     grad_clipping: 5
     classifier_dropout: 0.1
     attCls_dropout: 0.1
-    total_instance: 4
+    total_instance: 5  # Per-extreme budget across groups; MaxMinS selects up to 2x
     act: relu  # relu or silu gule
     optimizer:
         which: adam    # adam or adamw
