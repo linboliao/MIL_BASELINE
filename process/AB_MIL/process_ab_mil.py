@@ -1,3 +1,4 @@
+from pathlib import Path
 from utils.prediction_utils import prediction_path
 import torch
 from utils.data_loading import DataLoader
@@ -91,6 +92,12 @@ def process_AB_MIL(args):
         print(f'{FAIL}Test_Metrics:  {ENDC}{test_metrics}\n')
         add_epoch_info_log(epoch_info_log,epoch,train_loss,val_loss,test_loss,val_metrics,test_metrics)
         
+        if args.General.get('save_epochs', False):
+            folder = Path(args.Logs.now_log_dir) / 'epochs'
+            folder.mkdir(exist_ok=True)
+            with (folder / f'epoch_{epoch+1:03d}_model.pth').open('xb') as f:
+                torch.save(mil_model.state_dict(), f)
+
         # model selection, it only works when process_pipeline is 'Train_Val_Test' or 'Train_Val'
         best_val_metric,best_epoch = model_select(REVERSE,args,mil_model.state_dict(),val_metrics,best_model_metric,best_val_metric,epoch,best_epoch, val_loss=val_loss)
 

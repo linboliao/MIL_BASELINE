@@ -15,7 +15,7 @@ OUT=/NAS145/linboliao/Experiments/ProstateDiagnosis/provenance/generalization/pf
 CACHE=/data2/lbliao/pfm_loco_cache/seed42-conch-r1
 
 # staging
-"$PY" -B -m experiments.pfm_loco.stage --cache "$CACHE" \
+"$PY" -B -m experiments.stage --cache "$CACHE" \
   --dataset "$DATA/SL/train_val.csv" --dataset "$DATA/XC/train_val.csv" \
   --dataset "$DATA/CNB/train_val.csv" --dataset "$DATA/TURP/train_val.csv" --dataset "$DATA/RP/train_val.csv"
 mkdir -p "$OUT"
@@ -29,4 +29,4 @@ cp -n "$CACHE/manifest.json" "$OUT/staging_manifest.json"
 "$PY" -B -m experiments.run_fold --config "$SOURCE/RP/configs/model.yaml" --dataset "$CACHE/datasets/4.csv" --test-dataset "$DATA/RP/test.csv" --output "$OUT/RP" --gpu 0 --tie-break val_loss
 
 # clean staging：前面的训练失败时不会执行到这里。
-"$PY" -B -m experiments.pfm_loco.clean_stage --manifest "$CACHE/manifest.json" --execute --receipt "$OUT/cleanup.jsonl"
+"$PY" -B -m experiments.clean_stage --manifest "$CACHE/manifest.json" --execute --receipt "$OUT/cleanup.jsonl"

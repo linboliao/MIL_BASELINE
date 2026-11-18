@@ -1,0 +1,27 @@
+{
+  "kind": "execution_only_IO_amendment",
+  "user_instruction": "帮我修改成单折 preload 方式，串行执行",
+  "at": "2026-11-17T02:02:46.223287+00:00",
+  "parent_config_sha256": "6f9a6a0040870f0743c4dd1247fa3f3b860f3f56100b38e4d773a3c8006ffbad",
+  "parent_run": "/NAS145/linboliao/Experiments/ProstateDiagnosis/provenance/generalization/diagnostic-adaptation-mve/20261117-repeat0-erm-r1",
+  "changes": {
+    "training": "preload all source_design tensors and paired coords once; no LRU eviction or file stat/read in training loop",
+    "headroom_GiB": 35,
+    "scoring": "existing bounded16GiB LRU unchanged after training RAM release",
+    "fold_schedule": "serial, one GPU unchanged",
+    "disk_staging": false
+  },
+  "unchanged": [
+    "float32 feature bytes",
+    "safe input manifests",
+    "300 updates and batch16",
+    "patient/WSI/patch seeds and sampling",
+    "BCE/Adam/dropout",
+    "thresholds and selection",
+    "target evaluation label restrictions",
+    "24 GPUh ceiling"
+  ],
+  "adoption": "already-running SL remains its loaded code; unstarted XC and YN child processes load new source; root launch manifest preserved with this explicit amendment",
+  "no_job_interruption": true,
+  "no_stored_files_deleted": true
+}

@@ -7,10 +7,10 @@ training wrapper. Experiment-specific scripts live below `experiments/`:
 ```text
 experiments/
   run_fold.py                   # generic: explicit config + one wide dataset CSV
+  stage.py                      # shared feature staging
+  clean_stage.py                # shared manifest-based cache cleanup
   pfm_loco/
     prepare_split.py            # optional: explicit role CSVs -> wide input CSVs
-    stage.py                    # explicit dataset CSVs -> feature copies + staged CSVs
-    clean_stage.py              # explicit manifest -> owned copy cleanup
     audit.py                    # binary LOCO held-out coverage check
     run.sh                      # editable PFM LOCO shell recipe
     examples/nas_paths.json     # documentation only, not a runtime profile
@@ -61,7 +61,7 @@ modified. Calibration is checked and preserved, not used for training or test.
 ## Independent staging and cleanup
 
 ```bash
-"$PY" -B -m experiments.pfm_loco.stage \
+"$PY" -B -m experiments.stage \
   --dataset /absolute/fold1.csv --dataset /absolute/fold2.csv \
   --cache /data2/lbliao/pfm_loco_cache/my-run/conch
 # Outputs: cache/datasets/0.csv, cache/datasets/1.csv, cache/manifest.json
@@ -78,9 +78,9 @@ check, not a training RAM or disk allocation guarantee.
 
 ```bash
 # Read-only inspection is the default.
-"$PY" -B -m experiments.pfm_loco.clean_stage --manifest /absolute/cache/manifest.json
+"$PY" -B -m experiments.clean_stage --manifest /absolute/cache/manifest.json
 # Explicit cleanup, only after all consumers finished successfully:
-"$PY" -B -m experiments.pfm_loco.clean_stage \
+"$PY" -B -m experiments.clean_stage \
   --manifest /absolute/cache/manifest.json --execute --receipt /absolute/attempt/cleanup.jsonl
 ```
 
