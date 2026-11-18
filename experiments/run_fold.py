@@ -94,7 +94,7 @@ def prepare(config, dataset, output, test_dataset=None, tie_break=None):
 
 
 def execute(args):
-    repo = Path(__file__).resolve().parents[2]
+    repo = Path(__file__).resolve().parents[1]
     host = socket.gethostname()
     interpreters = {'server94':'/data12/jing/anaconda3/envs/PrePATH/bin/python',
                     'ubuntu':'/home/lbliao/anaconda3/envs/clam/bin/python'}

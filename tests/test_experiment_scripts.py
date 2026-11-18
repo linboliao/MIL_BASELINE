@@ -6,11 +6,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import yaml
-from scripts.experiments.run_fold import prepare as prepare_fold, validate_dataset
-from scripts.experiments.pfm_loco.prepare_split import prepare as prepare_roles, write, read
-from scripts.experiments.pfm_loco.stage import stage, digest
-from scripts.experiments.pfm_loco.clean_stage import deletion_plan, clean
-from scripts.experiments.pfm_loco.audit import inspect
+from experiments.run_fold import prepare as prepare_fold, validate_dataset
+from experiments.pfm_loco.prepare_split import prepare as prepare_roles, write, read
+from experiments.pfm_loco.stage import stage, digest
+from experiments.pfm_loco.clean_stage import deletion_plan, clean
+from experiments.pfm_loco.audit import inspect
 
 
 class ExperimentScriptTests(unittest.TestCase):
@@ -90,14 +90,14 @@ class ExperimentScriptTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             deletion_plan(manifest)
         self.assertTrue((self.root/'shared-cache/features').is_dir())
-        with patch('scripts.experiments.pfm_loco.clean_stage.socket.gethostname',return_value='other-node'):
+        with patch('experiments.pfm_loco.clean_stage.socket.gethostname',return_value='other-node'):
             with self.assertRaises(ValueError):
                 deletion_plan(manifest)
 
     def test_cleanup_plan_validates_hash_and_lists_only_features(self):
         stage([self.dataset],self.root/'verified-cache')
         manifest=self.root/'verified-cache/manifest.json'
-        with patch('scripts.experiments.pfm_loco.clean_stage.LOCAL_CACHE_ROOTS',(self.root,)):
+        with patch('experiments.pfm_loco.clean_stage.LOCAL_CACHE_ROOTS',(self.root,)):
             targets=deletion_plan(manifest)
             self.assertEqual(len(targets),2)
             self.assertTrue(all(p.parent==self.root/'verified-cache/features' for p in targets))
@@ -109,8 +109,8 @@ class ExperimentScriptTests(unittest.TestCase):
 
     def test_cleanup_only_calls_validated_targets_without_real_deletion(self):
         target=self.root/'train.pt'
-        with patch('scripts.experiments.pfm_loco.clean_stage.deletion_plan',return_value=[target]), \
-             patch('scripts.experiments.pfm_loco.clean_stage.os.unlink') as remove:
+        with patch('experiments.pfm_loco.clean_stage.deletion_plan',return_value=[target]), \
+             patch('experiments.pfm_loco.clean_stage.os.unlink') as remove:
             clean('synthetic-manifest',self.root/'receipt.jsonl')
             remove.assert_called_once_with(target)
         self.assertTrue(target.is_file())

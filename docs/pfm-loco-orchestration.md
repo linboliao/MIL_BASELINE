@@ -2,10 +2,10 @@
 
 Scientific configs and frozen splits stay on NAS at their original locations.
 There is no Study registry, fixed PFM matrix or directory-discovery policy in the
-training wrapper. Experiment-specific scripts live below `scripts/experiments/`:
+training wrapper. Experiment-specific scripts live below `experiments/`:
 
 ```text
-scripts/experiments/
+experiments/
   run_fold.py                   # generic: explicit config + one wide dataset CSV
   pfm_loco/
     prepare_split.py            # optional: explicit role CSVs -> wide input CSVs
@@ -23,7 +23,7 @@ From the repository, use the mapped Python for the current server:
 ```bash
 PY=/data12/jing/anaconda3/envs/PrePATH/bin/python   # 138
 # 195: /home/lbliao/anaconda3/envs/clam/bin/python, with its lib/ in LD_LIBRARY_PATH
-"$PY" -B -m scripts.experiments.run_fold \
+"$PY" -B -m experiments.run_fold \
   --config /absolute/config.yaml \
   --dataset /absolute/fold_train_val.csv \
   --output /NAS145/linboliao/Experiments/ProstateDiagnosis/provenance/generalization/my-study/my-run/fold1 \
@@ -61,7 +61,7 @@ modified. Calibration is checked and preserved, not used for training or test.
 ## Independent staging and cleanup
 
 ```bash
-"$PY" -B -m scripts.experiments.pfm_loco.stage \
+"$PY" -B -m experiments.pfm_loco.stage \
   --dataset /absolute/fold1.csv --dataset /absolute/fold2.csv \
   --cache /data2/lbliao/pfm_loco_cache/my-run/conch
 # Outputs: cache/datasets/0.csv, cache/datasets/1.csv, cache/manifest.json
@@ -78,9 +78,9 @@ check, not a training RAM or disk allocation guarantee.
 
 ```bash
 # Read-only inspection is the default.
-"$PY" -B -m scripts.experiments.pfm_loco.clean_stage --manifest /absolute/cache/manifest.json
+"$PY" -B -m experiments.pfm_loco.clean_stage --manifest /absolute/cache/manifest.json
 # Explicit cleanup, only after all consumers finished successfully:
-"$PY" -B -m scripts.experiments.pfm_loco.clean_stage \
+"$PY" -B -m experiments.pfm_loco.clean_stage \
   --manifest /absolute/cache/manifest.json --execute --receipt /absolute/attempt/cleanup.jsonl
 ```
 
@@ -93,29 +93,36 @@ requires inspection, not blind rerun. No cleanup is performed during these tests
 
 ## Shell composition
 
-The editable `pfm_loco/run.sh` is a recipe, not a Python scheduler:
+`pfm_loco/run.sh` is an explicit command list, with no loops, host detection,
+argument parsing or automatic matrix construction. Edit its paths and copy a
+model block when adding another model. Prepare the wide CSVs separately using
+`prepare_split.py` if the existing NAS inputs are role CSVs. Set DATA to the
+prepared directory containing SL/train_val.csv, SL/test.csv, etc.; the supplied
+/path/to/prepared/conch is deliberately an editable placeholder.
 
 ```text
-for each model:
-    prepare inputs if necessary
-    stage inputs once
-    train fold 1 (+ independent test and audit)
-    train fold 2 (+ independent test and audit)
-    ...
-    clean staging
+# conch
+stage SL, XC, CNB, TURP, RP inputs once
+train SL
+train XC
+train CNB
+train TURP
+train RP
+clean staging
 ```
 
 ```bash
-RUN_ID=seed42-conch-repro-r1 GPU=1 LOCO_DOMAINS='SL XC' \
-  bash scripts/experiments/pfm_loco/run.sh conch
+bash experiments/pfm_loco/run.sh
 ```
 
-Model arguments and LOCO_DOMAINS control this example's matrix. SOURCE,
-OUTPUT_PARENT and CACHE_PARENT only affect the shell recipe. You can replace its
-loops with explicit lines for completely different config/dataset pairs. The
-Python utilities remain unchanged. With `set -euo pipefail`, failure stops before
-cleanup, preserving cache and outputs. Nothing is cleaned by an EXIT trap.
-Separate servers need distinct run/cache IDs and non-overlapping outputs.
+The example selects the 195 interpreter and environment explicitly. On 138 edit
+the interpreter and TMPDIR to their mapped paths. OUT and CACHE must be unique
+per attempt/server. Scientific configs and prepared CSVs are explicit inputs;
+there are no RUN_ID/GPU environment arguments or model/domain loops. Each train
+line chooses its GPU directly. `set -euo pipefail` prevents cleanup if an earlier
+command fails. The staging manifest is copied into OUT before training so the
+original feature mapping survives cleanup. Independent audit remains available
+as `python -m experiments.pfm_loco.audit --output /absolute/fold-output`.
 
 The old `python -m orchestration` interface is replaced by these explicit tools.
 The script preserves the standardized LOCO design when given its original inputs;
